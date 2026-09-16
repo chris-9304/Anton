@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 const ACTIVITY_WINDOW_CAP: usize = 50;
 const TRAVERSAL_WINDOW_SECS: f64 = 1.0;
@@ -11,6 +11,11 @@ const TRAVERSAL_DIFFERENT_SUBFOLDERS_RATIO: f32 = 0.8;
 const HIGH_ENTROPY_THRESHOLD: f64 = 7.0;
 const RAMP_UP_RECENT: usize = 10;
 const RAMP_UP_OLDER: usize = 20;
+// Refreshing the full OS process table on every single file event is expensive; cap
+// how often resolve_root_pid actually rescans, and reuse the last-known result between
+// refreshes (safe: the events we're resolving arrive far more often than processes
+// realistically reparent).
+const PROCESS_REFRESH_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Operation type for file activity (maps from watcher event types).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,6 +152,7 @@ pub struct FamilyScore {
 pub struct BehaviorEngine {
     families: HashMap<u32, ProcessFamily>,
     system: sysinfo::System,
+    last_refresh: Instant,
 }
 
 impl BehaviorEngine {
@@ -154,12 +160,20 @@ impl BehaviorEngine {
         Self {
             families: HashMap::new(),
             system: sysinfo::System::new_all(),
+            // Already "expired" so the first call still refreshes.
+            last_refresh: Instant::now() - PROCESS_REFRESH_INTERVAL,
         }
     }
 
     /// Resolve root PID by walking parent chain via sysinfo. If pid is unknown, use pid as root.
+    /// The process table is only rescanned at most every PROCESS_REFRESH_INTERVAL --
+    /// scanning it on every single file event is a major bottleneck under real event load.
     pub fn resolve_root_pid(&mut self, pid: u32) -> u32 {
-        self.system.refresh_processes();
+        let now = Instant::now();
+        if now.duration_since(self.last_refresh) > PROCESS_REFRESH_INTERVAL {
+            self.system.refresh_processes();
+            self.last_refresh = now;
+        }
         let mut current = sysinfo::Pid::from_u32(pid);
         let mut visited = HashSet::new();
         while visited.insert(current.as_u32()) {

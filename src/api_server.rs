@@ -17,11 +17,12 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::sync::{Arc, Mutex};
+use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::CorsLayer;
 use crate::config::Config;
-use crate::models::{DetectionResult, ThreatKind, ThreatLevel, ScanRecord};
+use crate::models::{DetectionResult, ThreatLevel, ScanRecord};
 use crate::watcher::run_watcher_with_callback;
 use crate::recovery::RecoveryEngine;
 
@@ -51,6 +52,8 @@ struct MonitoringToggleRequest {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tracing_subscriber::fmt::init();
+
     let cfg = Config::for_test_run();
     let recovery = Arc::new(RecoveryEngine::new(&cfg));
     
@@ -73,7 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     std::thread::spawn(move || {
         let _ = run_watcher_with_callback(cfg_clone, settings, move |det: DetectionResult| {
-            let mut logs = state_clone.activity_logs.lock().unwrap();
+            let mut logs = state_clone.activity_logs.lock().unwrap_or_else(|e| e.into_inner());
             let log_line = format!(
                 "[{}] {:?} {:?} conf={:.0}%",
                 chrono::Local::now().format("%H:%M:%S"),
@@ -86,18 +89,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 logs.remove(0);
             }
 
-            let mut detections = state_clone.recent_detections.lock().unwrap();
+            let mut detections = state_clone.recent_detections.lock().unwrap_or_else(|e| e.into_inner());
             detections.push(det.clone());
             if detections.len() > 50 {
                 detections.remove(0);
             }
 
             if det.level.as_u8() >= ThreatLevel::High.as_u8() {
-                let mut threats = state_clone.threats_blocked.lock().unwrap();
+                let mut threats = state_clone.threats_blocked.lock().unwrap_or_else(|e| e.into_inner());
                 *threats += 1;
 
-                let mut scans = state_clone.scan_history.lock().unwrap();
-                let mut count = state_clone.scan_count.lock().unwrap();
+                let mut scans = state_clone.scan_history.lock().unwrap_or_else(|e| e.into_inner());
+                let mut count = state_clone.scan_count.lock().unwrap_or_else(|e| e.into_inner());
                 *count += 1;
                 scans.push(ScanRecord {
                     id: *count,
@@ -119,42 +122,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/settings/monitoring", post(toggle_monitoring))
         .route("/api/scan/quick", post(quick_scan))
         .route("/api/scan/full", post(full_scan))
+        .layer(CatchPanicLayer::new())
         .layer(CorsLayer::permissive())
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
-    println!("[*] Anton API server running on http://localhost:8080");
+    tracing::info!("Anton API server running on http://localhost:8080");
     axum::serve(listener, app).await?;
     Ok(())
 }
 
 async fn get_status(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
-        "ai_enabled": *state.ai_enabled.lock().unwrap(),
-        "monitoring_enabled": *state.monitoring_enabled.lock().unwrap(),
-        "scan_count": *state.scan_count.lock().unwrap(),
-        "threats_blocked": *state.threats_blocked.lock().unwrap(),
-        "files_monitored": *state.files_monitored.lock().unwrap(),
-        "heuristic_score": *state.heuristic_score.lock().unwrap(),
+        "ai_enabled": *state.ai_enabled.lock().unwrap_or_else(|e| e.into_inner()),
+        "monitoring_enabled": *state.monitoring_enabled.lock().unwrap_or_else(|e| e.into_inner()),
+        "scan_count": *state.scan_count.lock().unwrap_or_else(|e| e.into_inner()),
+        "threats_blocked": *state.threats_blocked.lock().unwrap_or_else(|e| e.into_inner()),
+        "files_monitored": *state.files_monitored.lock().unwrap_or_else(|e| e.into_inner()),
+        "heuristic_score": *state.heuristic_score.lock().unwrap_or_else(|e| e.into_inner()),
     }))
 }
 
 async fn get_detections(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let detections = state.recent_detections.lock().unwrap();
+    let detections = state.recent_detections.lock().unwrap_or_else(|e| e.into_inner());
     Json(serde_json::json!({
         "detections": detections.iter().rev().take(20).collect::<Vec<_>>()
     }))
 }
 
 async fn get_logs(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let logs = state.activity_logs.lock().unwrap();
+    let logs = state.activity_logs.lock().unwrap_or_else(|e| e.into_inner());
     Json(serde_json::json!({
         "logs": logs.iter().rev().take(50).collect::<Vec<_>>()
     }))
 }
 
 async fn get_scans(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let scans = state.scan_history.lock().unwrap();
+    let scans = state.scan_history.lock().unwrap_or_else(|e| e.into_inner());
     Json(serde_json::json!({
         "scans": scans.iter().rev().collect::<Vec<_>>()
     }))
@@ -164,7 +168,7 @@ async fn toggle_ai(
     State(state): State<AppState>,
     Json(req): Json<AiToggleRequest>,
 ) -> Json<serde_json::Value> {
-    *state.ai_enabled.lock().unwrap() = req.enabled;
+    *state.ai_enabled.lock().unwrap_or_else(|e| e.into_inner()) = req.enabled;
     Json(serde_json::json!({ "success": true, "ai_enabled": req.enabled }))
 }
 
@@ -172,14 +176,14 @@ async fn toggle_monitoring(
     State(state): State<AppState>,
     Json(req): Json<MonitoringToggleRequest>,
 ) -> Json<serde_json::Value> {
-    *state.monitoring_enabled.lock().unwrap() = req.enabled;
+    *state.monitoring_enabled.lock().unwrap_or_else(|e| e.into_inner()) = req.enabled;
     Json(serde_json::json!({ "success": true, "monitoring_enabled": req.enabled }))
 }
 
 async fn quick_scan(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let mut count = state.scan_count.lock().unwrap();
+    let mut count = state.scan_count.lock().unwrap_or_else(|e| e.into_inner());
     *count += 1;
-    let mut scans = state.scan_history.lock().unwrap();
+    let mut scans = state.scan_history.lock().unwrap_or_else(|e| e.into_inner());
     scans.push(ScanRecord {
         id: *count,
         scan_type: "Quick scan".to_string(),
@@ -191,9 +195,9 @@ async fn quick_scan(State(state): State<AppState>) -> Json<serde_json::Value> {
 }
 
 async fn full_scan(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let mut count = state.scan_count.lock().unwrap();
+    let mut count = state.scan_count.lock().unwrap_or_else(|e| e.into_inner());
     *count += 1;
-    let mut scans = state.scan_history.lock().unwrap();
+    let mut scans = state.scan_history.lock().unwrap_or_else(|e| e.into_inner());
     scans.push(ScanRecord {
         id: *count,
         scan_type: "Full scan".to_string(),

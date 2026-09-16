@@ -107,19 +107,33 @@ impl EntropyAnalyzer {
         }
     }
 
-    pub fn push(&mut self, ev: &FileEvent) {
+    /// `header`: the file's already-read leading bytes, if the caller has them (avoids
+    /// a second open+read of the same file the caller likely just read itself). Falls
+    /// back to reading the file here if `None`.
+    pub fn push(&mut self, ev: &FileEvent, header: Option<&[u8]>) {
         if ev.event_type != EventType::Modified {
             return;
         }
-        let mut buf = vec![0u8; ENTROPY_HEADER_BYTES];
-        let n = File::open(&ev.src)
-            .ok()
-            .and_then(|mut f| f.read(&mut buf).ok())
-            .unwrap_or(0);
-        if n == 0 {
+        let owned_buf;
+        let data: &[u8] = match header {
+            Some(h) => h,
+            None => {
+                let mut buf = vec![0u8; ENTROPY_HEADER_BYTES];
+                let n = File::open(&ev.src)
+                    .ok()
+                    .and_then(|mut f| f.read(&mut buf).ok())
+                    .unwrap_or(0);
+                if n == 0 {
+                    return;
+                }
+                buf.truncate(n);
+                owned_buf = buf;
+                &owned_buf
+            }
+        };
+        if data.is_empty() {
             return;
         }
-        let data = &buf[..n];
         let entropy = CryptoEngine::calculate_entropy(data);
         let now = ev.timestamp;
         self.samples.push_back((now, entropy));

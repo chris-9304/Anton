@@ -13,6 +13,7 @@ pub mod crypto;
 pub mod desktop;
 pub mod demo_log;
 
+use std::io::Read;
 use std::path::Path;
 
 const SUSPICIOUS_EXTENSIONS: &[&str] = &[
@@ -20,6 +21,11 @@ const SUSPICIOUS_EXTENSIONS: &[&str] = &[
     "xxx", "zzz", "aaa", "micro", "crypto", "kraken", "teslacrypt",
     "cerber", "locky", "petya", "wannacry", "ryuk", "maze", "zombie",
 ];
+
+// Only the first N bytes are read to check entropy -- reading whole files (some scans
+// walk into multi-gigabyte media/archive files) just to compute entropy is a serious
+// perf/memory hazard, and entropy of the header is already a good enough signal.
+const SUSPICIOUS_HEADER_BYTES: usize = 4096;
 
 pub fn check_file_suspicious(path: &Path) -> bool {
     let ext = path
@@ -33,9 +39,12 @@ pub fn check_file_suspicious(path: &Path) -> bool {
     {
         return true;
     }
-    if let Ok(data) = std::fs::read(path) {
-        if !data.is_empty() && crypto::CryptoEngine::calculate_entropy(&data) > 7.5 {
-            return true;
+    if let Ok(mut f) = std::fs::File::open(path) {
+        let mut buf = vec![0u8; SUSPICIOUS_HEADER_BYTES];
+        if let Ok(n) = f.read(&mut buf) {
+            if n > 0 && crypto::CryptoEngine::calculate_entropy(&buf[..n]) > 7.5 {
+                return true;
+            }
         }
     }
     false

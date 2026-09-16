@@ -52,22 +52,26 @@ impl AiEngine {
         self.freq.push(ev);
         self.ext.push(ev);
         self.beh.push(ev);
-        self.ent.push(ev);
+
+        // Read the file's header once and share it between EntropyAnalyzer and the
+        // behavior engine below, instead of each doing its own independent open+read
+        // of the same file for the same event.
+        let mut header_buf = vec![0u8; ENTROPY_HEADER_BYTES];
+        let header_len = if ev.event_type == crate::models::EventType::Modified {
+            File::open(&ev.src)
+                .ok()
+                .and_then(|mut f| f.read(&mut header_buf).ok())
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        let header: Option<&[u8]> = if header_len > 0 { Some(&header_buf[..header_len]) } else { None };
+        self.ent.push(ev, header);
 
         // Feed into Owlyshield-like behavior engine (pid=0 when watcher doesn't provide it).
-        let entropy = if ev.event_type == crate::models::EventType::Modified {
-            let mut buf = vec![0u8; ENTROPY_HEADER_BYTES];
-            let n = File::open(&ev.src)
-                .ok()
-                .and_then(|mut f| f.read(&mut buf).ok())
-                .unwrap_or(0);
-            if n > 0 {
-                crate::crypto::CryptoEngine::calculate_entropy(&buf[..n]) as f32
-            } else {
-                0.0
-            }
-        } else {
-            0.0
+        let entropy = match header {
+            Some(h) => crate::crypto::CryptoEngine::calculate_entropy(h) as f32,
+            None => 0.0,
         };
         let op = file_event_to_op(ev, entropy);
         let level = on_file_event(
