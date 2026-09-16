@@ -222,6 +222,19 @@ All simulators operate only in the `TestRun` directory and include automatic cle
   `CARGO_MANIFEST_DIR`, i.e. wherever the binary was *built*, not a per-user data
   directory — this is an existing design constraint (not introduced by the macOS port),
   worth knowing before relying on it for anything beyond local development/demos.
+- `npm audit` flags a moderate-severity `esbuild`/Vite dev-server vulnerability
+  ([GHSA-67mh-4wv8-2f99](https://github.com/advisories/GHSA-67mh-4wv8-2f99)) in
+  `web/`. It only affects `npm run dev` (a malicious website could probe the local dev
+  server) — production builds (`npm run build`, what actually ships) are unaffected.
+  The fix requires a breaking Vite 8 upgrade that `@vitejs/plugin-react` doesn't
+  officially support yet (its peer range tops out at `^7.0.0`); attempting it produced
+  new build warnings and a broken JSX option, so it was reverted. Revisit once
+  `@vitejs/plugin-react` adds Vite 8 support.
+- The API server's `/api/scan/quick` and `/api/scan/full` endpoints are demo stubs —
+  they record a `ScanRecord` and return a canned "no threats found" response rather
+  than triggering a real scan. `/api/status`'s `threats_blocked`/`files_monitored`/
+  `heuristic_score` are likewise fixed demo values, not live counters. Pre-existing,
+  not introduced by this pass.
 
 ## License
 
