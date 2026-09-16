@@ -18,3 +18,7 @@ venv/
 /node_modules/
 /dist/
 /build/
+
+# macOS packaging output (build these locally with macos/build_app_bundle.sh / build_dmg.sh)
+/Anton.app/
+*.dmg

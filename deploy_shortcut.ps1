@@ -1,5 +1,6 @@
 
 # deploy_shortcut.ps1
+# Windows-only. On macOS, see build_and_install.sh / macos/build_app_bundle.sh instead.
 # Creates "Anton Anti-Ransomware" desktop shortcut with Run as Administrator.
 # Run from project root; "Start in" is set to project root so ui/ and assets are found.
 

@@ -1,4 +1,5 @@
 @echo off
+:: Windows-only. On macOS, see build_and_install.sh instead.
 setlocal
 title Anton - Build and Install
 
