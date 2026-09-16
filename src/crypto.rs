@@ -14,6 +14,12 @@ use hmac::Hmac;
 use std::fs;
 use std::path::Path;
 
+#[derive(Debug, thiserror::Error)]
+pub enum CryptoError {
+    #[error("invalid HMAC key length")]
+    InvalidKeyLength,
+}
+
 pub struct CryptoEngine;
 
 impl CryptoEngine {
@@ -98,16 +104,19 @@ impl CryptoEngine {
         key
     }
 
-    pub fn compute_hmac(data: &[u8], key: &[u8]) -> Vec<u8> {
+    pub fn compute_hmac(data: &[u8], key: &[u8]) -> Result<Vec<u8>, CryptoError> {
         use hmac::Mac;
-        let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key).unwrap();
+        let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key)
+            .map_err(|_| CryptoError::InvalidKeyLength)?;
         mac.update(data);
-        mac.finalize().into_bytes().to_vec()
+        Ok(mac.finalize().into_bytes().to_vec())
     }
 
     pub fn verify_hmac(data: &[u8], key: &[u8], mac: &[u8]) -> bool {
-        let computed = Self::compute_hmac(data, key);
-        computed == mac
+        match Self::compute_hmac(data, key) {
+            Ok(computed) => computed == mac,
+            Err(_) => false,
+        }
     }
 
     pub fn generate_rsa_keypair() -> Result<(RsaPrivateKey, RsaPublicKey)> {

@@ -8,23 +8,29 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 
-fn seed_test_files(config: &Config) {
-    fs::create_dir_all(&config.test_run_dir).ok();
+#[derive(Debug, thiserror::Error)]
+pub enum SimulatorError {
+    #[error("I/O error during simulation: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+fn seed_test_files(config: &Config) -> Result<(), SimulatorError> {
+    fs::create_dir_all(&config.test_run_dir)?;
     for i in 0..20 {
         let mut p = config.test_run_dir.clone();
         p.push(format!("doc_{i}.txt"));
         if !p.exists() {
-            let mut f = File::create(&p).unwrap();
+            let mut f = File::create(&p)?;
             writeln!(f, "Important demo document {i}").ok();
         }
     }
+    Ok(())
 }
 
-pub fn run_old_ransomware_demo(config: &Config) {
+pub fn run_old_ransomware_demo(config: &Config) -> Result<(), SimulatorError> {
     println!("[*] Running old-style ransomware demo (slow, classic extensions)...");
-    seed_test_files(config);
-    let mut files: Vec<PathBuf> = fs::read_dir(&config.test_run_dir)
-        .unwrap()
+    seed_test_files(config)?;
+    let mut files: Vec<PathBuf> = fs::read_dir(&config.test_run_dir)?
         .filter_map(|e| {
             let p = e.ok()?.path();
             if p.extension().and_then(|s| s.to_str()) == Some("txt") {
@@ -42,13 +48,13 @@ pub fn run_old_ransomware_demo(config: &Config) {
         thread::sleep(Duration::from_millis(250));
     }
     println!("[*] Old ransomware demo completed.");
+    Ok(())
 }
 
-pub fn run_modern_ransomware_demo(config: &Config) {
+pub fn run_modern_ransomware_demo(config: &Config) -> Result<(), SimulatorError> {
     println!("[*] Running modern ransomware demo (fast, parallel, .crypt)...");
-    seed_test_files(config);
-    let files: Vec<PathBuf> = fs::read_dir(&config.test_run_dir)
-        .unwrap()
+    seed_test_files(config)?;
+    let files: Vec<PathBuf> = fs::read_dir(&config.test_run_dir)?
         .filter_map(|e| {
             let p = e.ok()?.path();
             if p.extension().and_then(|s| s.to_str()) == Some("txt") {
@@ -71,13 +77,13 @@ pub fn run_modern_ransomware_demo(config: &Config) {
         thread::sleep(Duration::from_millis(30));
     });
     println!("[*] Modern ransomware demo completed.");
+    Ok(())
 }
 
-pub fn run_wiper_malware_demo(config: &Config) {
+pub fn run_wiper_malware_demo(config: &Config) -> Result<(), SimulatorError> {
     println!("[*] Running wiper malware demo (mass delete)...");
-    seed_test_files(config);
-    let files: Vec<PathBuf> = fs::read_dir(&config.test_run_dir)
-        .unwrap()
+    seed_test_files(config)?;
+    let files: Vec<PathBuf> = fs::read_dir(&config.test_run_dir)?
         .filter_map(|e| Some(e.ok()?.path()))
         .collect();
     for p in files {
@@ -85,6 +91,7 @@ pub fn run_wiper_malware_demo(config: &Config) {
         thread::sleep(Duration::from_millis(50));
     }
     println!("[*] Wiper malware demo completed.");
+    Ok(())
 }
 
 const ENCRYPTED_EXT: &[&str] = &["locked", "crypt", "cordyceps", "zombie"];
@@ -161,7 +168,9 @@ pub fn revert_demo(config: &Config) {
                 }
             }
         }
-        reset_test_run_files(config);
+        if let Err(e) = reset_test_run_files(config) {
+            eprintln!("[!] revert_demo: failed to reset TestRun: {}", e);
+        }
     }
 }
 
@@ -177,14 +186,16 @@ pub fn cleanup_and_reset_after_ransomware(config: &Config) {
             }
         }
     }
-    reset_test_run_files(config);
+    if let Err(e) = reset_test_run_files(config) {
+        eprintln!("[!] cleanup_and_reset_after_ransomware: failed to reset TestRun: {}", e);
+    }
 }
 
 /// Delete all current files in TestRun and create fresh demo files
 /// with mixed types: .txt, .docx, .pptx.
-pub fn reset_test_run_files(config: &Config) {
+pub fn reset_test_run_files(config: &Config) -> Result<(), SimulatorError> {
     println!("[*] Resetting TestRun folder with mixed file types...");
-    fs::create_dir_all(&config.test_run_dir).ok();
+    fs::create_dir_all(&config.test_run_dir)?;
 
     // Delete existing files (leave directory)
     if let Ok(entries) = fs::read_dir(&config.test_run_dir) {
@@ -200,7 +211,7 @@ pub fn reset_test_run_files(config: &Config) {
     for i in 0..5 {
         let mut p = config.test_run_dir.clone();
         p.push(format!("report_{i}.txt"));
-        let mut f = File::create(&p).unwrap();
+        let mut f = File::create(&p)?;
         writeln!(f, "Sample text report {i}\nThis is a demo text file.").ok();
     }
 
@@ -208,7 +219,7 @@ pub fn reset_test_run_files(config: &Config) {
     for i in 0..5 {
         let mut p = config.test_run_dir.clone();
         p.push(format!("proposal_{i}.docx"));
-        let mut f = File::create(&p).unwrap();
+        let mut f = File::create(&p)?;
         writeln!(f, "Fake DOCX content for proposal {i} (demo only).").ok();
     }
 
@@ -216,7 +227,7 @@ pub fn reset_test_run_files(config: &Config) {
     for i in 0..5 {
         let mut p = config.test_run_dir.clone();
         p.push(format!("slides_{i}.pptx"));
-        let mut f = File::create(&p).unwrap();
+        let mut f = File::create(&p)?;
         writeln!(f, "Fake PPTX content for slide deck {i} (demo only).").ok();
     }
 
@@ -227,5 +238,6 @@ pub fn reset_test_run_files(config: &Config) {
     CanaryManager::default().deploy(&config.test_run_dir);
 
     println!("[*] TestRun folder reset complete.");
+    Ok(())
 }
 

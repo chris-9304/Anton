@@ -116,14 +116,24 @@ fn run_cli(args: &[String]) {
         }
         Some("demo") => run_demo(),
         Some("simulate") => {
-            match args.get(2).map(|s| s.as_str()) {
+            let result = match args.get(2).map(|s| s.as_str()) {
                 Some("old") => anton::simulators::run_old_ransomware_demo(&cfg),
                 Some("modern") => anton::simulators::run_modern_ransomware_demo(&cfg),
                 Some("wiper") => anton::simulators::run_wiper_malware_demo(&cfg),
-                _ => eprintln!("Usage: anton simulate <old|modern|wiper>"),
+                _ => {
+                    eprintln!("Usage: anton simulate <old|modern|wiper>");
+                    return;
+                }
+            };
+            if let Err(e) = result {
+                eprintln!("[!] Simulation error: {}", e);
             }
         }
-        Some("reset") => anton::simulators::reset_test_run_files(&cfg),
+        Some("reset") => {
+            if let Err(e) = anton::simulators::reset_test_run_files(&cfg) {
+                eprintln!("[!] Reset error: {}", e);
+            }
+        }
         Some("revert") => {
             anton::simulators::revert_demo(&cfg);
             println!("[*] Revert done. TestRun restored.");

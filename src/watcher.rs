@@ -136,7 +136,9 @@ where
                     } else if matches!(det_result.kind, ThreatKind::WiperMalware) {
                         crate::demo_log::log_remediation("WIPER_MALWARE_BLOCKED", "Resetting protected files");
                         remediating.store(true, Ordering::SeqCst);
-                        crate::simulators::reset_test_run_files(&cfg_clone);
+                        if let Err(e) = crate::simulators::reset_test_run_files(&cfg_clone) {
+                            eprintln!("[!] Remediation reset failed: {}", e);
+                        }
                         std::thread::sleep(REMEDIATION_QUIET_PERIOD);
                         remediating.store(false, Ordering::SeqCst);
                     }
