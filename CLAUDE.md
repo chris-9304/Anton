@@ -77,8 +77,19 @@ file reads instead of loading whole files for entropy checks; `opt-level = 3` (w
 `"z"`, which optimizes for size, not the stated "fast" goal); `simulators.rs`/`crypto.rs`
 unwraps replaced with real error handling (`thiserror`); `tracing` structured logging.
 
+**Cleanup pass (same day):** `api_server.rs` no longer redeclares `mod X;` for every
+module — it depends on the `anton` lib crate via `use anton::...` like every other
+binary, which dropped its warning count from 32 to ~0 (it was duplicate-compiling every
+module in a narrower context where most functions looked unused; this was also the
+root cause of the missing-`mod demo_log;` bug above). `cargo build`/`cargo clippy` are
+both completely clean now (zero warnings workspace-wide). Removed genuinely dead code
+found this way (`AppState.recovery`, `RecoveryEngine.enable_raptorq`). Untracked
+`TestRun/`/`demo_log.txt` from git — pure runtime output the app regenerates from
+scratch every run, not fixture data.
+
 See README.md's "Known Limitations" for the Vault stub, GUI-can't-be-auto-verified
-caveat, ad-hoc signing/Gatekeeper note, and the `TestRun` path constraint.
+caveat, ad-hoc signing/Gatekeeper note, `TestRun` path constraint, the demo-stub API
+endpoints, and a moderate dev-only npm vulnerability that's not worth a breaking fix.
 
 ## Architecture
 
