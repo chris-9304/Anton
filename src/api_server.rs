@@ -9,6 +9,7 @@ mod watcher;
 mod simulators;
 mod recovery;
 mod crypto;
+mod demo_log;
 
 use axum::{
     extract::State,

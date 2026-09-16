@@ -1,0 +1,503 @@
+// Anton desktop UI.
+//
+// This file was recreated from scratch: the original `ui/appwindow.slint` never made
+// it into this checkout when the project was transferred from Windows, so nothing in
+// this crate could compile. Every property and callback below is reverse-engineered
+// from the exact `ui.set_*`/`ui.get_*`/`ui.on_*` calls in src/desktop.rs (the single
+// canonical GUI implementation after the main.rs/desktop.rs de-duplication).
+
+import { Button, CheckBox, LineEdit, ScrollView, ProgressIndicator } from "std-widgets.slint";
+
+export struct ActivityEntry {
+    time: string,
+    message: string,
+    is_threat: bool,
+}
+
+component StatTile inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <color> accent: #3b82f6;
+
+    background: #1a1f2e;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: #2a3142;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 6px;
+        alignment: start;
+
+        Text {
+            text: root.value;
+            font-size: 26px;
+            font-weight: 700;
+            color: root.accent;
+        }
+        Text {
+            text: root.label;
+            font-size: 12px;
+            color: #8b93a7;
+        }
+    }
+}
+
+component SidebarButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> active;
+    callback clicked <=> touch.clicked;
+
+    height: 40px;
+    border-radius: 8px;
+    background: root.active ? #2563eb : (touch.has-hover ? #1e2536 : transparent);
+
+    touch := TouchArea { }
+
+    Text {
+        text: root.label;
+        color: root.active ? white : #b8c0d4;
+        font-size: 14px;
+        font-weight: root.active ? 600 : 400;
+        horizontal-alignment: left;
+        vertical-alignment: center;
+        x: 16px;
+    }
+}
+
+component SettingToggle inherits Rectangle {
+    in property <string> label;
+    in property <string> description;
+    in property <bool> checked;
+    callback toggled(bool);
+
+    height: 56px;
+    background: #1a1f2e;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: #2a3142;
+
+    HorizontalLayout {
+        padding: 14px;
+        spacing: 12px;
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            Text { text: root.label; font-size: 14px; font-weight: 600; color: white; }
+            Text { text: root.description; font-size: 11px; color: #8b93a7; }
+        }
+
+        Rectangle { horizontal-stretch: 1; }
+
+        CheckBox {
+            checked: root.checked;
+            toggled => { root.toggled(self.checked); }
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "Anton — Anti-Ransomware";
+    preferred-width: 1080px;
+    preferred-height: 720px;
+    min-width: 860px;
+    min-height: 600px;
+    background: #0d1117;
+
+    // ── Dashboard stats ──────────────────────────────────────────────────
+    in-out property <string> stat_files: "0";
+    in-out property <string> stat_threats: "0";
+    in-out property <string> stat_score: "—";
+    in-out property <string> protection_status: "Starting...";
+    in-out property <string> system_health_cpu: "0%";
+    in-out property <string> system_health_memory: "0%";
+    in-out property <[ActivityEntry]> recent_activity: [];
+
+    // ── Global toggles ───────────────────────────────────────────────────
+    in-out property <bool> ai_enabled: true;
+    in-out property <bool> monitoring_enabled: true;
+
+    // ── Navigation ───────────────────────────────────────────────────────
+    in-out property <string> active_tab: "Dashboard";
+
+    // ── Scan tab ─────────────────────────────────────────────────────────
+    in-out property <string> scan_status: "Idle";
+    in-out property <float> scan_progress: 0.0;
+    in-out property <string> scan_progress_text: "0%";
+    in-out property <string> scan_path: "";
+    in-out property <int> files_scanned: 0;
+    in-out property <int> threat_count: 0;
+
+    // ── Settings tab ─────────────────────────────────────────────────────
+    in-out property <bool> setting_extension_enabled: true;
+    in-out property <bool> setting_rate_limit_enabled: true;
+    in-out property <bool> setting_entropy_enabled: true;
+    in-out property <bool> setting_dns_enabled: true;
+    in-out property <string> new_folder_path: "";
+    in-out property <[string]> protected_folders: [];
+    in-out property <string> diagnostic_state: "idle";
+    in-out property <[string]> diagnostic_log: [];
+
+    // ── Callbacks (Rust wires these in desktop.rs::run_desktop) ─────────
+    callback toggled_setting(string, bool);
+    callback run_self_test();
+    callback add_folder_path(string);
+    callback remove_folder(int);
+    callback request_scan();
+    callback run_demo();
+    callback revert_demo();
+
+    HorizontalLayout {
+        // ── Sidebar ──────────────────────────────────────────────────────
+        Rectangle {
+            width: 200px;
+            background: #111722;
+            border-width: 1px;
+            border-color: #1f2635;
+
+            VerticalLayout {
+                padding: 16px;
+                spacing: 6px;
+                alignment: start;
+
+                Text {
+                    text: "ANTON";
+                    font-size: 20px;
+                    font-weight: 800;
+                    color: white;
+                }
+                Text {
+                    text: "Anti-Ransomware";
+                    font-size: 11px;
+                    color: #8b93a7;
+                }
+
+                Rectangle { height: 20px; }
+
+                SidebarButton {
+                    label: "Dashboard";
+                    active: root.active_tab == "Dashboard";
+                    clicked => { root.active_tab = "Dashboard"; }
+                }
+                SidebarButton {
+                    label: "Scan";
+                    active: root.active_tab == "Scan";
+                    clicked => { root.active_tab = "Scan"; }
+                }
+                SidebarButton {
+                    label: "Settings";
+                    active: root.active_tab == "Settings";
+                    clicked => { root.active_tab = "Settings"; }
+                }
+
+                Rectangle { vertical-stretch: 1; }
+
+                Rectangle {
+                    height: 1px;
+                    background: #1f2635;
+                }
+                Text {
+                    text: root.protection_status;
+                    font-size: 11px;
+                    color: root.protection_status == "Protected" ? #22c55e : #f59e0b;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        // ── Main content ─────────────────────────────────────────────────
+        Rectangle {
+            horizontal-stretch: 1;
+
+            if root.active_tab == "Dashboard": ScrollView {
+                VerticalLayout {
+                    padding: 24px;
+                    spacing: 18px;
+                    alignment: start;
+
+                    Text {
+                        text: "Dashboard";
+                        font-size: 22px;
+                        font-weight: 700;
+                        color: white;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 14px;
+                        StatTile { label: "Files Scanned"; value: root.stat_files; accent: #3b82f6; }
+                        StatTile { label: "Threats Detected"; value: root.stat_threats; accent: #ef4444; }
+                        StatTile { label: "Safety Score"; value: root.stat_score; accent: #22c55e; }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 14px;
+                        StatTile { label: "CPU"; value: root.system_health_cpu; accent: #a78bfa; }
+                        StatTile { label: "Memory"; value: root.system_health_memory; accent: #a78bfa; }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 12px;
+                        Button {
+                            text: "Run Ransomware Demo";
+                            clicked => { root.run_demo(); }
+                        }
+                        Button {
+                            text: "Revert Demo";
+                            clicked => { root.revert_demo(); }
+                        }
+                    }
+
+                    Text {
+                        text: "Recent Activity";
+                        font-size: 16px;
+                        font-weight: 600;
+                        color: white;
+                    }
+
+                    Rectangle {
+                        background: #1a1f2e;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: #2a3142;
+                        height: 260px;
+
+                        ScrollView {
+                            VerticalLayout {
+                                padding: 10px;
+                                spacing: 4px;
+                                alignment: start;
+
+                                if root.recent_activity.length == 0: Text {
+                                    text: "No activity yet.";
+                                    color: #8b93a7;
+                                    font-size: 12px;
+                                }
+
+                                for entry[i] in root.recent_activity: HorizontalLayout {
+                                    spacing: 10px;
+                                    padding: 4px;
+                                    Text {
+                                        text: entry.time;
+                                        color: #8b93a7;
+                                        font-size: 11px;
+                                        width: 70px;
+                                    }
+                                    Text {
+                                        text: entry.message;
+                                        color: entry.is_threat ? #ef4444 : #d6dae4;
+                                        font-size: 12px;
+                                        horizontal-stretch: 1;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.active_tab == "Scan": ScrollView {
+                VerticalLayout {
+                    padding: 24px;
+                    spacing: 16px;
+                    alignment: start;
+
+                    Text {
+                        text: "Scan";
+                        font-size: 22px;
+                        font-weight: 700;
+                        color: white;
+                    }
+
+                    Text {
+                        text: "Folder to scan (leave blank to use your Documents folder):";
+                        color: #8b93a7;
+                        font-size: 12px;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 10px;
+                        scan_path_input := LineEdit {
+                            text: root.scan_path;
+                            placeholder-text: "/path/to/folder";
+                            edited(text) => { root.scan_path = text; }
+                        }
+                        Button {
+                            text: "Scan";
+                            enabled: root.scan_status != "Scanning";
+                            clicked => { root.request_scan(); }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 14px;
+                        StatTile { label: "Status"; value: root.scan_status; accent: #3b82f6; }
+                        StatTile { label: "Files Scanned"; value: root.files_scanned; accent: #a78bfa; }
+                        StatTile { label: "Threats Found"; value: root.threat_count; accent: #ef4444; }
+                    }
+
+                    ProgressIndicator {
+                        progress: root.scan_progress / 100.0;
+                        height: 8px;
+                    }
+                    Text {
+                        text: root.scan_progress_text;
+                        color: #8b93a7;
+                        font-size: 11px;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            if root.active_tab == "Settings": ScrollView {
+                VerticalLayout {
+                    padding: 24px;
+                    spacing: 16px;
+                    alignment: start;
+
+                    Text {
+                        text: "Settings";
+                        font-size: 22px;
+                        font-weight: 700;
+                        color: white;
+                    }
+
+                    Text {
+                        text: "Detection Engines";
+                        font-size: 14px;
+                        font-weight: 600;
+                        color: #b8c0d4;
+                    }
+
+                    SettingToggle {
+                        label: "Extension Monitoring";
+                        description: "Flag mass renames to known ransomware extensions";
+                        checked: root.setting_extension_enabled;
+                        toggled(v) => { root.setting_extension_enabled = v; root.toggled_setting("extension", v); }
+                    }
+                    SettingToggle {
+                        label: "Rate Limiting";
+                        description: "Flag abnormally fast bursts of file changes";
+                        checked: root.setting_rate_limit_enabled;
+                        toggled(v) => { root.setting_rate_limit_enabled = v; root.toggled_setting("rate_limit", v); }
+                    }
+                    SettingToggle {
+                        label: "Entropy Analysis";
+                        description: "Flag files whose contents look encrypted";
+                        checked: root.setting_entropy_enabled;
+                        toggled(v) => { root.setting_entropy_enabled = v; root.toggled_setting("entropy", v); }
+                    }
+                    SettingToggle {
+                        label: "Network / DNS Analysis";
+                        description: "Flag connections to known-bad domains";
+                        checked: root.setting_dns_enabled;
+                        toggled(v) => { root.setting_dns_enabled = v; root.toggled_setting("dns", v); }
+                    }
+
+                    Rectangle { height: 8px; }
+
+                    Text {
+                        text: "Protected Folders";
+                        font-size: 14px;
+                        font-weight: 600;
+                        color: #b8c0d4;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 10px;
+                        folder_input := LineEdit {
+                            text: root.new_folder_path;
+                            placeholder-text: "/path/to/folder";
+                            edited(text) => { root.new_folder_path = text; }
+                        }
+                        Button {
+                            text: "Add";
+                            clicked => { root.add_folder_path(folder_input.text); }
+                        }
+                    }
+
+                    Rectangle {
+                        background: #1a1f2e;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: #2a3142;
+
+                        VerticalLayout {
+                            padding: 8px;
+                            spacing: 4px;
+                            alignment: start;
+
+                            if root.protected_folders.length == 0: Text {
+                                text: "No protected folders added.";
+                                color: #8b93a7;
+                                font-size: 12px;
+                            }
+
+                            for folder[i] in root.protected_folders: HorizontalLayout {
+                                spacing: 8px;
+                                padding: 4px;
+                                Text {
+                                    text: folder;
+                                    color: #d6dae4;
+                                    font-size: 12px;
+                                    horizontal-stretch: 1;
+                                    wrap: no-wrap;
+                                }
+                                Button {
+                                    text: "Remove";
+                                    clicked => { root.remove_folder(i); }
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle { height: 8px; }
+
+                    Text {
+                        text: "Diagnostics";
+                        font-size: 14px;
+                        font-weight: 600;
+                        color: #b8c0d4;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Button {
+                            text: root.diagnostic_state == "running" ? "Running..." : "Run Self-Test";
+                            enabled: root.diagnostic_state != "running";
+                            clicked => { root.run_self_test(); }
+                        }
+                        Text {
+                            text: root.diagnostic_state;
+                            color: root.diagnostic_state == "passed" ? #22c55e : #8b93a7;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    Rectangle {
+                        background: #1a1f2e;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: #2a3142;
+                        height: 120px;
+
+                        ScrollView {
+                            VerticalLayout {
+                                padding: 8px;
+                                spacing: 2px;
+                                alignment: start;
+
+                                for line[i] in root.diagnostic_log: Text {
+                                    text: line;
+                                    color: #d6dae4;
+                                    font-size: 12px;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
