@@ -1,0 +1,24 @@
+================================================================================
+ANTON - RANSOMWARE DEFENSE DEMO LOG
+================================================================================
+Timestamp: 2026-02-12 12:10:17
+================================================================================
+
+
+--- PHASE 1: BACKUP ---
+
+--- PHASE 2: MONITORING & RANSOMWARE EXECUTION ---
+[ANTON DETECTED] 11:20:18.881 | Kind: Benign | Level: None | Confidence: 0% | File: C:\Users\Chris\Desktop\Projects\dev\Code Craft\TestRun\.env.backup
+[ANTON DETECTED] 11:20:18.899 | Kind: Benign | Level: None | Confidence: 0% | File: C:\Users\Chris\Desktop\Projects\dev\Code Craft\TestRun\.env.cordyceps
+[ANTON DETECTED] 11:20:18.917 | Kind: Benign | Level: None | Confidence: 0% | File: C:\Users\Chris\Desktop\Projects\dev\Code Craft\TestRun\.env.cordyceps
+[ANTON DETECTED] 11:20:18.968 | Kind: Benign | Level: None | Confidence: 0% | File: C:\Users\Chris\Desktop\Projects\dev\Code Craft\TestRun\.gitkeep.dat
+[ANTON DETECTED] 11:20:18.995 | Kind: Benign | Level: None | Confidence: 0% | File: C:\Users\Chris\Desktop\Projects\dev\Code Craft\TestRun\.gitkeep.cordyceps
+[ANTON DETECTED] 11:20:19.019 | Kind: Benign | Level: None | Confidence: 0% | File: C:\Users\Chris\Desktop\Projects\dev\Code Craft\TestRun\.gitkeep.cordyceps
+[ANTON DETECTED] 11:20:19.054 | Kind: Benign | Level: None | Confidence: 0% | File: C:\Users\Chris\Desktop\Projects\dev\Code Craft\TestRun\.sys_config.dat
+
+--- PHASE 3: REMEDIATION & RECOVERY ---
+[ANTON DETECTED] 11:20:19.082 | Kind: Benign | Level: None | Confidence: 0% | File: C:\Users\Chris\Desktop\Projects\dev\Code Craft\TestRun\.sys_config.cordyceps
+
+================================================================================
+Demo complete. Log ends here.
+================================================================================

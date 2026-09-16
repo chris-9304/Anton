@@ -1,0 +1,20 @@
+# Rust
+/target/
+**/*.rs.bk
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Python (if any leftover)
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# Build / Node (if reintroduced)
+/node_modules/
+/dist/
+/build/

@@ -1,0 +1,61 @@
+[package]
+name = "anton"
+version = "1.0.0"
+edition = "2021"
+
+[[bin]]
+name = "anton"
+path = "src/main.rs"
+
+[[bin]]
+name = "anton_api"
+path = "src/api_server.rs"
+
+[[bin]]
+name = "anton_desktop"
+path = "src/slint_main.rs"
+
+[[bin]]
+name = "demo_ransomware"
+path = "src/demo_ransomware.rs"
+
+[lib]
+name = "anton"
+path = "src/lib.rs"
+
+[dependencies]
+slint = "1.9"
+sysinfo = "0.30"
+walkdir = "2"
+dirs = "5"
+notify = "6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+rand = "0.8"
+rayon = "1.10"
+tokio = { version = "1", features = ["full"] }
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors"] }
+chacha20poly1305 = "0.10"
+aes-gcm = "0.10"
+rsa = "0.9"
+sha2 = "0.10"
+pbkdf2 = "0.12"
+hmac = "0.12"
+hex = "0.4"
+base64 = "0.21"
+anyhow = "1.0"
+thiserror = "1.0"
+lazy_static = "1.4"
+rfd = "0.15"
+
+[build-dependencies]
+slint-build = "1.9"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
