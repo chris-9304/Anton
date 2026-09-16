@@ -169,7 +169,7 @@ pub fn revert_demo(config: &Config) {
             }
         }
         if let Err(e) = reset_test_run_files(config) {
-            eprintln!("[!] revert_demo: failed to reset TestRun: {}", e);
+            tracing::error!("revert_demo: failed to reset TestRun: {}", e);
         }
     }
 }
@@ -187,7 +187,7 @@ pub fn cleanup_and_reset_after_ransomware(config: &Config) {
         }
     }
     if let Err(e) = reset_test_run_files(config) {
-        eprintln!("[!] cleanup_and_reset_after_ransomware: failed to reset TestRun: {}", e);
+        tracing::error!("cleanup_and_reset_after_ransomware: failed to reset TestRun: {}", e);
     }
 }
 

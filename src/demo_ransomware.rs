@@ -90,6 +90,7 @@ fn run_sandboxed(root: PathBuf, log_path: Option<PathBuf>) {
 }
 
 fn main() {
+    tracing_subscriber::fmt::init();
     let root = env::args()
         .nth(1)
         .map(PathBuf::from)

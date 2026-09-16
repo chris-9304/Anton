@@ -109,8 +109,6 @@ where
                     }
                 };
 
-                cb(det_result.clone());
-
                 // Log detection to demo log
                 crate::demo_log::log_detection(
                     &format!("{:?}", det_result.kind),
@@ -137,12 +135,14 @@ where
                         crate::demo_log::log_remediation("WIPER_MALWARE_BLOCKED", "Resetting protected files");
                         remediating.store(true, Ordering::SeqCst);
                         if let Err(e) = crate::simulators::reset_test_run_files(&cfg_clone) {
-                            eprintln!("[!] Remediation reset failed: {}", e);
+                            tracing::error!("Remediation reset failed: {}", e);
                         }
                         std::thread::sleep(REMEDIATION_QUIET_PERIOD);
                         remediating.store(false, Ordering::SeqCst);
                     }
                 }
+
+                cb(det_result);
             }
         }
     })?;
@@ -157,8 +157,8 @@ where
 pub fn run_watcher(config: Config) -> NotifyResult<()> {
     let settings = Arc::new(Mutex::new(AppSettings::default()));
     run_watcher_with_callback(config, settings, |det| {
-        println!(
-            "[watch] {:?} level={:?} conf={:.0}% freq={:.2} ext={:.2} beh={:.2}",
+        tracing::info!(
+            "{:?} level={:?} conf={:.0}% freq={:.2} ext={:.2} beh={:.2}",
             det.kind,
             det.level,
             det.confidence * 100.0,

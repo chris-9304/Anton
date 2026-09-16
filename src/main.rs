@@ -14,15 +14,15 @@ fn run_demo() {
     // Initialize demo log
     let log_path = anton::demo_log::demo_log_path(&cfg);
     if let Err(e) = anton::demo_log::DemoLogger::init(&log_path) {
-        eprintln!("[!] Failed to init demo log: {}", e);
+        tracing::error!("Failed to init demo log: {}", e);
     } else {
-        println!("[*] Demo log: {}", log_path.display());
+        tracing::info!("Demo log: {}", log_path.display());
     }
 
     anton::demo_log::log_phase("PHASE 1: BACKUP");
     println!("[*] Demo: Backing up TestRun...");
     if let Err(e) = anton::simulators::backup_test_run(&cfg) {
-        eprintln!("[!] Backup failed: {}", e);
+        tracing::error!("Backup failed: {}", e);
         anton::demo_log::close_and_flush();
         return;
     }
@@ -71,7 +71,7 @@ fn run_demo() {
             .spawn()
             .ok()
     } else {
-        eprintln!("[!] demo_ransomware binary not found. Run: cargo build --bin demo_ransomware");
+        tracing::error!("demo_ransomware binary not found. Run: cargo build --bin demo_ransomware");
         anton::simulators::revert_demo(&cfg);
         anton::demo_log::close_and_flush();
         return;
@@ -111,7 +111,7 @@ fn run_cli(args: &[String]) {
         Some("run") => {
             println!("[*] Anton monitoring {:?}", cfg.test_run_dir);
             if let Err(e) = watcher::run_watcher(cfg) {
-                eprintln!("[!] Watcher error: {}", e);
+                tracing::error!("Watcher error: {}", e);
             }
         }
         Some("demo") => run_demo(),
@@ -126,12 +126,12 @@ fn run_cli(args: &[String]) {
                 }
             };
             if let Err(e) = result {
-                eprintln!("[!] Simulation error: {}", e);
+                tracing::error!("Simulation error: {}", e);
             }
         }
         Some("reset") => {
             if let Err(e) = anton::simulators::reset_test_run_files(&cfg) {
-                eprintln!("[!] Reset error: {}", e);
+                tracing::error!("Reset error: {}", e);
             }
         }
         Some("revert") => {
@@ -152,6 +152,7 @@ fn run_cli(args: &[String]) {
 }
 
 fn main() {
+    tracing_subscriber::fmt::init();
     let args: Vec<String> = std::env::args().collect();
     let run_gui = args.len() <= 1
         || args.get(1).map(|s| s == "gui" || s == "--gui").unwrap_or(false);
