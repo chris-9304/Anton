@@ -20,7 +20,10 @@ use std::time::{Duration, SystemTime};
 // completes. Remediation itself generates a burst of Create/Remove events that look
 // exactly like the ransomware-like behavior it's meant to stop -- without this guard,
 // the watcher detects its own cleanup as an attack and re-triggers remediation forever.
-const REMEDIATION_QUIET_PERIOD: Duration = Duration::from_millis(800);
+// 2s (not e.g. 800ms) because macOS FSEvents batches/delivers events with noticeably
+// more latency than Windows' ReadDirectoryChangesW; a shorter window measurably let a
+// stale rename-related event for an already-remediated file slip through in testing.
+const REMEDIATION_QUIET_PERIOD: Duration = Duration::from_secs(2);
 
 fn to_event(e: &Event) -> Option<FileEvent> {
     let ts = SystemTime::now();
