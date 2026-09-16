@@ -2,29 +2,30 @@
 
 ## How to Run the Anti-Ransomware (Anton)
 
-- **Desktop (recommended):** Double-click **Anton Anti-Ransomware** on the Desktop (shortcut). Or run `anton` from the project folder after `cargo build --release`.
+- **Desktop (recommended):** Double-click **Anton** on the Desktop (macOS: the alias created by `build_and_install.sh`; Windows: the shortcut created by `build_and_install.bat`). Or run `anton` from the project folder after `cargo build --release`.
 - **CLI monitoring:** `anton run` — starts real-time monitoring of the TestRun folder.
-- **Build + shortcut:** Run `build_and_install.bat` to build release and create the desktop shortcut.
+- **Build + shortcut:** macOS: run `./build_and_install.sh` (builds `Anton.app` and adds a Desktop alias). Windows: run `build_and_install.bat`.
 
 ## How to Run the Ransomware Demo
 
 1. **Build both binaries:**  
    `cargo build --release`  
-   This produces `target/release/anton.exe` and `target/release/demo_ransomware.exe`.
+   This produces `target/release/anton` and `target/release/demo_ransomware` (macOS/Linux;
+   `anton.exe` / `demo_ransomware.exe` on Windows).
 
 2. **From GUI:**  
    Open Anton, go to **Dashboard**, click **Run Ransomware Demo**. The app will back up TestRun, start the watcher, run the sandboxed demo ransomware, then stop it and restore files. Status appears in Protection Status and Threat History.
 
 3. **From CLI:**  
    `anton demo`  
-   Backs up TestRun, starts the watcher, runs `demo_ransomware.exe` (sandboxed to TestRun), waits for detection or 45s, kills the ransomware, then reverts (restores files). Always ends with "Ransomware stopped. Files restored."
+   Backs up TestRun, starts the watcher, runs `demo_ransomware` (sandboxed to TestRun), waits for detection or 45s, kills the ransomware, then reverts (restores files). Always ends with "Ransomware stopped. Files restored."
 
 4. **Manual revert:**  
    `anton revert` or use the **Revert Demo** button in the Dashboard to restore TestRun from backup or remove locked/encrypted files and reset sample files.
 
 ## Demo Ransomware (Sandboxed)
 
-- **Binary:** `demo_ransomware.exe` (built with `cargo build --release` or `cargo build --bin demo_ransomware`).
+- **Binary:** `demo_ransomware` (`demo_ransomware.exe` on Windows) — built with `cargo build --release` or `cargo build --bin demo_ransomware`.
 - **Behavior:** Only modifies files under one folder (default: project `TestRun`). For each file: renames to `.cordyceps`, writes magic header `CORD` (Cordyceps-style). No real encryption; for demonstration only.
 - **Usage:** `demo_ransomware [PATH]` — default PATH is the project `TestRun` directory.
 - **Safety:** Path check ensures it never leaves the given root (sandboxed to TestRun for demos).
@@ -58,6 +59,8 @@
 ## Demo Environment Setup
 
 1. Run `cargo build --release`.
-2. Run `build_and_install.bat` to create the desktop shortcut (optional).
+2. Optional: create a desktop launcher — macOS: `./build_and_install.sh`; Windows: `build_and_install.bat`.
 3. Ensure the `TestRun` folder exists (it is created automatically if missing) and contains sample files for the demo.
 4. For a clean repeat demo: use **Revert Demo** or `anton revert` after each run so TestRun is restored for the next demonstration.
+
+See the main [README.md](README.md#build--run-on-macos) for the full macOS build/run/package instructions (native build, Podman/OrbStack containers, `.app`/`.dmg` packaging).
