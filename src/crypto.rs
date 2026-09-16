@@ -182,3 +182,39 @@ impl RaptorQEncoder {
         Ok(result)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn entropy_of_all_zero_buffer_is_zero() {
+        let data = vec![0u8; 4096];
+        assert_eq!(CryptoEngine::calculate_entropy(&data), 0.0);
+    }
+
+    #[test]
+    fn entropy_of_uniform_random_like_buffer_is_high() {
+        // A buffer containing every possible byte value equally often has maximal
+        // (8.0 bits/byte) Shannon entropy -- a good stand-in for "looks encrypted".
+        let mut data = Vec::with_capacity(256 * 16);
+        for _ in 0..16 {
+            for b in 0u8..=255 {
+                data.push(b);
+            }
+        }
+        let entropy = CryptoEngine::calculate_entropy(&data);
+        assert!(entropy > 7.9, "expected near-maximal entropy, got {}", entropy);
+    }
+
+    #[test]
+    fn compute_hmac_is_deterministic_and_verifiable() {
+        let key = b"a reasonably long test key";
+        let data = b"some data to authenticate";
+        let mac1 = CryptoEngine::compute_hmac(data, key).expect("hmac should succeed");
+        let mac2 = CryptoEngine::compute_hmac(data, key).expect("hmac should succeed");
+        assert_eq!(mac1, mac2);
+        assert!(CryptoEngine::verify_hmac(data, key, &mac1));
+        assert!(!CryptoEngine::verify_hmac(b"different data", key, &mac1));
+    }
+}

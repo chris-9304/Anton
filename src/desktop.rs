@@ -388,3 +388,36 @@ pub fn run_desktop() {
 
     ui.run().expect("Failed to run UI");
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::truncate_display;
+
+    #[test]
+    fn truncate_display_short_string_unchanged() {
+        assert_eq!(truncate_display("hello", 10), "hello");
+    }
+
+    #[test]
+    fn truncate_display_ascii_truncates_from_front() {
+        let s = "a".repeat(100);
+        let out = truncate_display(&s, 67);
+        assert_eq!(out.chars().count(), 67);
+    }
+
+    #[test]
+    fn truncate_display_multibyte_char_at_naive_cut_point_does_not_panic() {
+        // Regression test: byte-offset slicing (&s[s.len()-67..]) panics if the cut
+        // point lands inside a multi-byte UTF-8 character. Build a string where a
+        // multi-byte char sits right at the naive 67-byte-from-the-end boundary.
+        let mut s = String::new();
+        for _ in 0..70 {
+            s.push('é'); // 2 bytes in UTF-8
+        }
+        // Must not panic, and must produce valid UTF-8 with exactly 67 chars.
+        let out = truncate_display(&s, 67);
+        assert_eq!(out.chars().count(), 67);
+        assert!(out.chars().all(|c| c == 'é'));
+    }
+}
