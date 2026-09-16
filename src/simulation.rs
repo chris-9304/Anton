@@ -237,9 +237,18 @@ pub fn run_self_test(
 }
 
 /// Spawn a background thread that runs cleanup_sandbox after 30 minutes if not already cleaned.
+/// For non-GUI callers only (no Slint event loop available to schedule a timer on).
 pub fn schedule_cleanup_timeout(config: Config) {
     thread::spawn(move || {
         thread::sleep(Duration::from_secs(CLEANUP_TIMEOUT_SECS));
+        cleanup_sandbox(&config);
+    });
+}
+
+/// Same as `schedule_cleanup_timeout`, but for GUI callers: uses a Slint timer instead of
+/// parking a dedicated OS thread for the full 30 minutes.
+pub fn schedule_cleanup_timeout_gui(config: Config) {
+    slint::Timer::single_shot(Duration::from_secs(CLEANUP_TIMEOUT_SECS), move || {
         cleanup_sandbox(&config);
     });
 }

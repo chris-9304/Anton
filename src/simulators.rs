@@ -1,3 +1,4 @@
+use crate::canary::CanaryManager;
 use crate::config::Config;
 use rand::Rng;
 use rayon::prelude::*;
@@ -218,6 +219,12 @@ pub fn reset_test_run_files(config: &Config) {
         let mut f = File::create(&p).unwrap();
         writeln!(f, "Fake PPTX content for slide deck {i} (demo only).").ok();
     }
+
+    // Reset deletes everything in TestRun, including the honeytoken canary files
+    // deployed at watcher startup -- redeploy them so honeytoken detection keeps
+    // working for the rest of the session instead of silently going dark after the
+    // first remediation cycle.
+    CanaryManager::default().deploy(&config.test_run_dir);
 
     println!("[*] TestRun folder reset complete.");
 }

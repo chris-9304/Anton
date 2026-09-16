@@ -67,6 +67,18 @@ fn push_activity(time: String, message: String, is_threat: bool) {
     });
 }
 
+// Char-boundary-safe truncation: keeps the last `max_chars` characters of `s`.
+// Byte-offset slicing (e.g. &s[s.len()-N..]) panics if the cut point lands inside a
+// multi-byte UTF-8 character, which is a realistic risk for real filesystem paths.
+fn truncate_display(s: &str, max_chars: usize) -> String {
+    let char_count = s.chars().count();
+    if char_count <= max_chars {
+        s.to_string()
+    } else {
+        s.chars().skip(char_count - max_chars).collect()
+    }
+}
+
 pub fn run_desktop() {
     let ui = AppWindow::new().expect("Failed to create UI");
 
@@ -74,6 +86,8 @@ pub fn run_desktop() {
     ui.set_stat_threats("0".into());
     ui.set_stat_score("—".into());
     ui.set_active_tab("Dashboard".into());
+    ui.set_ai_enabled(true);
+    ui.set_monitoring_enabled(true);
     ui.set_system_health_cpu("0%".into());
     ui.set_system_health_memory("0%".into());
     ui.set_protection_status("Starting...".into());
@@ -88,6 +102,8 @@ pub fn run_desktop() {
     ui.set_diagnostic_state("idle".into());
 
     let app_settings = Arc::new(Mutex::new(AppSettings::default()));
+    let testing_mode = Arc::new(AtomicBool::new(false));
+    let detection_occurred = Arc::new(AtomicBool::new(false));
 
     let activity_model = Rc::new(VecModel::from(vec![]));
     ui.set_recent_activity(ModelRc::new(activity_model.clone()));
@@ -129,9 +145,11 @@ pub fn run_desktop() {
     });
 
     let cfg = Config::for_test_run();
-    crate::simulation::schedule_cleanup_timeout(cfg.clone());
+    crate::simulation::schedule_cleanup_timeout_gui(cfg.clone());
     let protection_ui = ui.as_weak().clone();
     let watcher_settings = app_settings.clone();
+    let testing_mode_w = testing_mode.clone();
+    let detection_occurred_w = detection_occurred.clone();
     thread::spawn(move || {
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(u) = protection_ui.upgrade() {
@@ -139,6 +157,11 @@ pub fn run_desktop() {
             }
         });
         let _ = watcher::run_watcher_with_callback(cfg, watcher_settings, move |det: DetectionResult| {
+            if testing_mode_w.load(Ordering::SeqCst)
+                && det.level.as_u8() >= crate::models::ThreatLevel::High.as_u8()
+            {
+                detection_occurred_w.store(true, Ordering::SeqCst);
+            }
             let msg = format!("{:?} ({:.0}%)", det.kind, det.confidence * 100.0);
             let time = chrono::Local::now().format("%H:%M:%S").to_string();
             let is_threat = det.level.as_u8() >= crate::models::ThreatLevel::High.as_u8();
@@ -215,6 +238,65 @@ pub fn run_desktop() {
         }
     });
 
+    ui.on_run_demo({
+        let ui_weak = ui.as_weak().clone();
+        move || {
+            if let Some(u) = ui_weak.upgrade() {
+                u.set_protection_status("Running ransomware demo...".into());
+            }
+            let ui_weak2 = ui_weak.clone();
+            thread::spawn(move || {
+                let exe = std::env::current_exe()
+                    .unwrap_or_else(|_| PathBuf::from(format!("anton{}", std::env::consts::EXE_SUFFIX)));
+                let status = std::process::Command::new(&exe)
+                    .arg("demo")
+                    .status();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(u) = ui_weak2.upgrade() {
+                        u.set_protection_status("Protected".into());
+                        if status.as_ref().map(|s| s.success()).unwrap_or(false) {
+                            push_activity(
+                                chrono::Local::now().format("%H:%M:%S").to_string(),
+                                "Demo complete. Ransomware stopped. Files restored.".to_string(),
+                                false,
+                            );
+                        } else {
+                            push_activity(
+                                chrono::Local::now().format("%H:%M:%S").to_string(),
+                                "Demo finished. Check TestRun folder.".to_string(),
+                                false,
+                            );
+                        }
+                    }
+                });
+            });
+        }
+    });
+
+    ui.on_revert_demo({
+        let ui_weak = ui.as_weak().clone();
+        move || {
+            if let Some(u) = ui_weak.upgrade() {
+                u.set_protection_status("Reverting demo...".into());
+            }
+            let ui_weak2 = ui_weak.clone();
+            thread::spawn(move || {
+                let cfg = crate::config::Config::for_test_run();
+                crate::simulators::revert_demo(&cfg);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(u) = ui_weak2.upgrade() {
+                        u.set_protection_status("Protected".into());
+                        push_activity(
+                            chrono::Local::now().format("%H:%M:%S").to_string(),
+                            "TestRun reverted. Ready for another demo.".to_string(),
+                            false,
+                        );
+                    }
+                });
+            });
+        }
+    });
+
     ui.on_request_scan({
         let ui_scan = ui.as_weak().clone();
         let scanning = Arc::new(AtomicBool::new(false));
@@ -265,8 +347,8 @@ pub fn run_desktop() {
                     let scanned = (i + 1) as i32;
                     let threats_i = threats as i32;
                     let path_display = path.display().to_string();
-                    let label = if path_display.len() > 70 {
-                        format!("Scanning: ...{}", &path_display[path_display.len() - 67..])
+                    let label = if path_display.chars().count() > 70 {
+                        format!("Scanning: ...{}", truncate_display(&path_display, 67))
                     } else {
                         format!("Scanning: {}", path_display)
                     };
