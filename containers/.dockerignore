@@ -1,0 +1,6 @@
+target/
+graphify-out/
+web/node_modules/
+web/dist/
+src/TestRun/
+.git/

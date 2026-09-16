@@ -1,0 +1,12 @@
+# Builds and serves the web/ React dashboard.
+
+FROM node:20-slim AS builder
+WORKDIR /build
+COPY web/package.json web/package-lock.json* ./
+RUN npm install
+COPY web/ ./
+RUN npm run build
+
+FROM nginx:alpine
+COPY --from=builder /build/dist /usr/share/nginx/html
+EXPOSE 80
