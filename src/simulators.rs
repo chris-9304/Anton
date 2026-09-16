@@ -105,7 +105,7 @@ pub fn backup_test_run(config: &Config) -> std::io::Result<()> {
     let backup = config
         .test_run_dir
         .parent()
-        .unwrap_or_else(|| config.test_run_dir.as_path())
+        .unwrap_or(config.test_run_dir.as_path())
         .join("TestRun_backup");
     if backup.exists() {
         let _ = fs::remove_dir_all(&backup);
@@ -133,7 +133,7 @@ pub fn revert_demo(config: &Config) {
     let backup = config
         .test_run_dir
         .parent()
-        .unwrap_or_else(|| config.test_run_dir.as_path())
+        .unwrap_or(config.test_run_dir.as_path())
         .join("TestRun_backup");
     if backup.exists() {
         if let Ok(entries) = fs::read_dir(&config.test_run_dir) {
@@ -235,7 +235,7 @@ pub fn reset_test_run_files(config: &Config) -> Result<(), SimulatorError> {
     // deployed at watcher startup -- redeploy them so honeytoken detection keeps
     // working for the rest of the session instead of silently going dark after the
     // first remediation cycle.
-    CanaryManager::default().deploy(&config.test_run_dir);
+    CanaryManager.deploy(&config.test_run_dir);
 
     println!("[*] TestRun folder reset complete.");
     Ok(())

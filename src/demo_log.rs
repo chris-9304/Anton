@@ -53,7 +53,7 @@ impl DemoLogger {
 /// This does NOT hold the file lock - it opens, writes, and closes.
 pub fn append_log_file(log_path: &Path, msg: &str) -> std::io::Result<()> {
     let mut file = OpenOptions::new()
-        .write(true)
+        
         .create(true)
         .append(true)
         .open(log_path)?;

@@ -43,7 +43,7 @@ pub fn setup_sandbox(config: &Config) -> std::io::Result<()> {
         f.write_all(b"%PDF-1.4 fake pdf\n")?;
     }
 
-    let canary = CanaryManager::default();
+    let canary = CanaryManager;
     canary.deploy(&root);
     Ok(())
 }
@@ -56,7 +56,7 @@ pub fn cleanup_sandbox(config: &Config) {
     }
 }
 
-/// 1) Cordyceps mimic: recursively walk sandbox, rename to .cordyceps, write CORD header.
+/// Cordyceps mimic: recursively walk sandbox, rename to .cordyceps, write CORD header.
 /// Exits when stop_flag is set.
 pub fn run_cordyceps_mimic(config: &Config, stop_flag: Arc<AtomicBool>) {
     let root = sandbox_path(config);

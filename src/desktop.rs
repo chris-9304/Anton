@@ -15,7 +15,7 @@ slint::include_modules!();
 const PROTECTED_FOLDERS_FILE: &str = "protected_folders.json";
 
 thread_local! {
-    static ACTIVITY_MODEL: RefCell<Option<Rc<VecModel<ActivityEntry>>>> = RefCell::new(None);
+    static ACTIVITY_MODEL: RefCell<Option<Rc<VecModel<ActivityEntry>>>> = const { RefCell::new(None) };
 }
 
 fn default_scan_dir() -> PathBuf {

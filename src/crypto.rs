@@ -131,7 +131,6 @@ impl CryptoEngine {
             return Ok(());
         }
         let data = fs::read(path)?;
-        let mut rng = rand::thread_rng();
         for _ in 0..3 {
             let random_data: Vec<u8> = (0..data.len()).map(|_| rand::random()).collect();
             fs::write(path, &random_data)?;

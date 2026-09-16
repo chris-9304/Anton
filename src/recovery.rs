@@ -7,7 +7,6 @@ use std::time::SystemTime;
 
 pub struct RecoveryEngine {
     shadow_dir: PathBuf,
-    enable_raptorq: bool,
     redundancy: u8,
 }
 
@@ -16,7 +15,6 @@ impl RecoveryEngine {
         std::fs::create_dir_all(&cfg.shadow_copy_dir).ok();
         Self {
             shadow_dir: cfg.shadow_copy_dir.clone(),
-            enable_raptorq: cfg.enable_raptorq,
             redundancy: cfg.raptorq_redundancy,
         }
     }
@@ -49,7 +47,7 @@ impl RecoveryEngine {
 
     pub fn cleanup_encrypted_files(&self, dir: &Path) -> Result<u32> {
         let mut cleaned = 0;
-        let ransomware_exts = vec![".locked", ".crypt", ".encrypted", ".encrypt", ".vault"];
+        let ransomware_exts = [".locked", ".crypt", ".encrypted", ".encrypt", ".vault"];
         
         if dir.is_dir() {
             for entry in fs::read_dir(dir)? {
@@ -60,7 +58,7 @@ impl RecoveryEngine {
                         if ransomware_exts.iter().any(|&re| ext.eq_ignore_ascii_case(re)) {
                             if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                                 let original_name = format!("{}.{}", 
-                                    stem.rsplitn(2, '.').nth(1).unwrap_or(stem),
+                                    stem.rsplit_once('.').map(|x| x.0).unwrap_or(stem),
                                     path.extension().and_then(|e| e.to_str()).unwrap_or("")
                                 );
                                 let original_path = path.parent().unwrap().join(&original_name);

@@ -25,6 +25,12 @@ pub struct FrequencyAnalyzer {
     events: VecDeque<(SystemTime, EventType)>,
 }
 
+impl Default for FrequencyAnalyzer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FrequencyAnalyzer {
     pub fn new() -> Self {
         Self {

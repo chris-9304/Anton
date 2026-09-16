@@ -22,3 +22,10 @@ venv/
 # macOS packaging output (build these locally with macos/build_app_bundle.sh / build_dmg.sh)
 /Anton.app/
 *.dmg
+
+# Runtime-generated demo/detection artifacts (regenerated automatically by the app --
+# Config::for_test_run() creates these; commiting them just adds diff noise every run)
+/TestRun/
+/ShadowCopies/
+/demo_log.txt
+/protected_folders.json

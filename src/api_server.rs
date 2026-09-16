@@ -1,16 +1,7 @@
-mod app_settings;
-mod behavior_engine;
-mod canary;
-mod config;
-mod models;
-mod ai;
-mod detectors;
-mod watcher;
-mod simulators;
-mod recovery;
-mod crypto;
-mod demo_log;
-
+use anton::app_settings;
+use anton::config::Config;
+use anton::models::{DetectionResult, ThreatLevel, ScanRecord};
+use anton::watcher::run_watcher_with_callback;
 use axum::{
     extract::State,
     response::Json,
@@ -21,10 +12,6 @@ use serde::Deserialize;
 use std::sync::{Arc, Mutex};
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::CorsLayer;
-use crate::config::Config;
-use crate::models::{DetectionResult, ThreatLevel, ScanRecord};
-use crate::watcher::run_watcher_with_callback;
-use crate::recovery::RecoveryEngine;
 
 #[derive(Clone)]
 struct AppState {
@@ -37,7 +24,6 @@ struct AppState {
     activity_logs: Arc<Mutex<Vec<String>>>,
     scan_history: Arc<Mutex<Vec<ScanRecord>>>,
     recent_detections: Arc<Mutex<Vec<DetectionResult>>>,
-    recovery: Arc<RecoveryEngine>,
 }
 
 #[derive(Deserialize)]
@@ -55,8 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
     let cfg = Config::for_test_run();
-    let recovery = Arc::new(RecoveryEngine::new(&cfg));
-    
+
     let state = AppState {
         ai_enabled: Arc::new(Mutex::new(true)),
         monitoring_enabled: Arc::new(Mutex::new(true)),
@@ -67,7 +52,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         activity_logs: Arc::new(Mutex::new(Vec::new())),
         scan_history: Arc::new(Mutex::new(Vec::new())),
         recent_detections: Arc::new(Mutex::new(Vec::new())),
-        recovery: recovery.clone(),
     };
 
     let state_clone = state.clone();

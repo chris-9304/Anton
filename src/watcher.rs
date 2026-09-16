@@ -34,7 +34,7 @@ fn to_event(e: &Event) -> Option<FileEvent> {
         EventKind::Remove(_) => EventType::Deleted,
         _ => return None,
     };
-    let src = e.paths.get(0)?.clone();
+    let src = e.paths.first()?.clone();
     let dest = if matches!(&e.kind, EventKind::Modify(ModifyKind::Name(_))) {
         e.paths.get(1).cloned()
     } else {
@@ -58,7 +58,7 @@ where
 {
     std::fs::create_dir_all(&config.test_run_dir)?;
 
-    let canary_manager = CanaryManager::default();
+    let canary_manager = CanaryManager;
     canary_manager.deploy(&config.test_run_dir);
 
     let shared_cfg = Arc::new(config.clone());

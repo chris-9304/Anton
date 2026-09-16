@@ -35,6 +35,6 @@ impl CanaryManager {
     /// Returns true if the given path is one of our known canary (bait) files.
     pub fn is_canary(&self, path: &Path) -> bool {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        CANARY_FILES.iter().any(|&c| name == c)
+        CANARY_FILES.contains(&name)
     }
 }
