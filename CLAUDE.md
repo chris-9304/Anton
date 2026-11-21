@@ -91,6 +91,19 @@ See README.md's "Known Limitations" for the Vault stub, GUI-can't-be-auto-verifi
 caveat, ad-hoc signing/Gatekeeper note, `TestRun` path constraint, the demo-stub API
 endpoints, and a moderate dev-only npm vulnerability that's not worth a breaking fix.
 
+## Current cleanup behavior
+
+The watcher now has an owned `start_watcher` handle and bounded worker queue; API
+settings share the actual watcher configuration. `demo.rs` owns the shared cancellable
+demo flow and child lifetime. `scanner.rs` streams directory scans with bounded progress.
+The desktop self-test uses the real sandbox diagnostic. API scans remain explicitly
+simulated, saved folders are preferences only, and DNS has no connected event source.
+The default-enabled `desktop` feature gates Slint and UI compilation; containers use
+`--no-default-features`. The app bundle ships one GUI binary (`anton`) plus its simulator.
+The graphify updater was unavailable during this cleanup; the generated graph is stale.
+See README.md for current limits, checks, and measured performance; historical port
+notes above describe the previous implementation where they conflict with this section.
+
 ## Architecture
 
 | Binary | Source | Role |

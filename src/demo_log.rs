@@ -1,148 +1,100 @@
-use std::fs::{File, OpenOptions};
+//! Human-readable demo transcript, intentionally separate from diagnostic tracing.
+use chrono::Local;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use chrono::Local;
+use std::sync::Mutex;
 
-lazy_static::lazy_static! {
-    static ref DEMO_LOG: Arc<Mutex<Option<DemoLogger>>> = Arc::new(Mutex::new(None));
-}
+const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
+lazy_static::lazy_static! { static ref DEMO_LOG: Mutex<Option<DemoLogger>> = Mutex::new(None); }
 
 pub struct DemoLogger {
-    file: File,
+    path: PathBuf,
 }
 
 impl DemoLogger {
-    pub fn init(log_path: &Path) -> std::io::Result<()> {
-        let file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(log_path)?;
-        
-        let mut logger = DemoLogger { file };
-        logger.write_header()?;
-        
-        let mut guard = DEMO_LOG.lock().unwrap();
-        *guard = Some(logger);
-        Ok(())
-    }
-
-    fn write_header(&mut self) -> std::io::Result<()> {
-        writeln!(
-            self.file,
-            "================================================================================\n\
-             ANTON - RANSOMWARE DEFENSE DEMO LOG\n\
-             ================================================================================\n\
-             Timestamp: {}\n\
-             ================================================================================\n",
-            Local::now().format("%Y-%m-%d %H:%M:%S")
+    pub fn init(path: &Path) -> std::io::Result<()> {
+        // Preserve the previous transcript before starting a new demo.
+        if path.exists() {
+            fs::rename(path, path.with_extension("txt.1"))?;
+        }
+        let mut guard = DEMO_LOG.lock().unwrap_or_else(|e| e.into_inner());
+        append_log_file(
+            path,
+            &format!(
+                "ANTON — RANSOMWARE DEFENSE DEMO LOG\nTimestamp: {}\n",
+                Local::now().format("%Y-%m-%d %H:%M:%S")
+            ),
         )?;
-        self.file.flush()?;
-        Ok(())
-    }
-
-    fn write_raw(&mut self, msg: &str) -> std::io::Result<()> {
-        write!(self.file, "{}", msg)?;
-        self.file.flush()?;
+        *guard = Some(Self { path: path.into() });
         Ok(())
     }
 }
 
-/// Log directly to a shared file (for use in separate processes like demo_ransomware)
-/// This does NOT hold the file lock - it opens, writes, and closes.
-pub fn append_log_file(log_path: &Path, msg: &str) -> std::io::Result<()> {
-    let mut file = OpenOptions::new()
-        
-        .create(true)
-        .append(true)
-        .open(log_path)?;
-    write!(file, "{}", msg)?;
-    file.flush()?;
-    drop(file); // Explicitly close before returning
-    Ok(())
-}
-
-/// Log a ransomware action (encryption, file rename, etc.)
-pub fn log_ransomware_action(action: &str, file_path: &str) {
-    let msg = format!(
-        "[RANSOMWARE] {} | {} | {}\n",
-        Local::now().format("%H:%M:%S%.3f"),
-        action,
-        file_path
-    );
-    if let Ok(mut guard) = DEMO_LOG.lock() {
-        if let Some(ref mut logger) = *guard {
-            let _ = logger.write_raw(&msg);
+/// Reopen for each append so the demo child observes transcript rotation too.
+pub fn append_log_file(path: &Path, message: &str) -> std::io::Result<()> {
+    // A single unusually long filesystem path cannot make the transcript unbounded.
+    let mut end = message.len().min(64 * 1024);
+    while !message.is_char_boundary(end) {
+        end -= 1;
+    }
+    let message = &message[..end];
+    if fs::metadata(path).is_ok_and(|m| m.len() + message.len() as u64 > MAX_LOG_BYTES) {
+        match fs::rename(path, path.with_extension("txt.1")) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
         }
     }
-    println!("{}", msg.trim());
+    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    file.write_all(message.as_bytes())?;
+    file.flush()
 }
 
-/// Log an Anton detection
-pub fn log_detection(kind: &str, level: &str, confidence: f32, file_path: Option<&str>) {
-    let path_str = file_path.unwrap_or("(system)");
-    let msg = format!(
-        "[ANTON DETECTED] {} | Kind: {} | Level: {} | Confidence: {:.0}% | File: {}\n",
+fn write(message: String) {
+    if let Some(logger) = &*DEMO_LOG.lock().unwrap_or_else(|e| e.into_inner()) {
+        if let Err(error) = append_log_file(&logger.path, &message) {
+            tracing::error!(%error, "Demo transcript write failed");
+        }
+    }
+    println!("{}", message.trim());
+}
+
+pub fn log_ransomware_action(action: &str, path: &str) {
+    write(format!(
+        "[RANSOMWARE] {} | {action} | {path}\n",
+        Local::now().format("%H:%M:%S%.3f")
+    ));
+}
+pub fn log_detection(kind: &str, level: &str, confidence: f32, path: Option<&str>) {
+    write(format!(
+        "[ANTON DETECTED] {} | Kind: {kind} | Level: {level} | Confidence: {:.0}% | File: {}\n",
         Local::now().format("%H:%M:%S%.3f"),
-        kind,
-        level,
         confidence * 100.0,
-        path_str
-    );
-    if let Ok(mut guard) = DEMO_LOG.lock() {
-        if let Some(ref mut logger) = *guard {
-            let _ = logger.write_raw(&msg);
-        }
-    }
-    println!("{}", msg.trim());
+        path.unwrap_or("(system)")
+    ));
 }
-
-/// Log a remediation/cleanup action by Anton
 pub fn log_remediation(action: &str, details: &str) {
-    let msg = format!(
-        "[ANTON REMEDIATION] {} | {} | {}\n",
-        Local::now().format("%H:%M:%S%.3f"),
-        action,
-        details
-    );
-    if let Ok(mut guard) = DEMO_LOG.lock() {
-        if let Some(ref mut logger) = *guard {
-            let _ = logger.write_raw(&msg);
-        }
-    }
-    println!("{}", msg.trim());
+    write(format!(
+        "[ANTON REMEDIATION] {} | {action} | {details}\n",
+        Local::now().format("%H:%M:%S%.3f")
+    ));
 }
-
-/// Log demo phase transitions
 pub fn log_phase(phase: &str) {
-    let msg = format!(
-        "\n--- {} ---\n",
-        phase
-    );
-    if let Ok(mut guard) = DEMO_LOG.lock() {
-        if let Some(ref mut logger) = *guard {
-            let _ = logger.write_raw(&msg);
-        }
-    }
-    println!("{}", msg.trim());
+    write(format!("\n--- {phase} ---\n"));
 }
-
-/// Get the demo log file path
 pub fn demo_log_path(config: &crate::config::Config) -> PathBuf {
-    config.test_run_dir.parent()
+    config
+        .test_run_dir
+        .parent()
         .unwrap_or(&config.test_run_dir)
         .join("demo_log.txt")
 }
-
 pub fn close_and_flush() {
-    if let Ok(mut guard) = DEMO_LOG.lock() {
-        if let Some(ref mut logger) = *guard {
-            let _ = writeln!(logger.file, "\n================================================================================");
-            let _ = writeln!(logger.file, "Demo complete. Log ends here.");
-            let _ = writeln!(logger.file, "================================================================================");
-            let _ = logger.file.flush();
+    let mut guard = DEMO_LOG.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(logger) = guard.take() {
+        if let Err(error) = append_log_file(&logger.path, "\nDemo transcript closed.\n") {
+            tracing::error!(%error, "Demo transcript write failed");
         }
-        *guard = None;
     }
 }

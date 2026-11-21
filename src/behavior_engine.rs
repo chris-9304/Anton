@@ -67,22 +67,21 @@ impl ProcessFamily {
         if self.activity_window.len() < 2 {
             return 0.0;
         }
-        let now = self.activity_window.back().map(|e| e.timestamp).unwrap_or_else(SystemTime::now);
+        let now = self
+            .activity_window
+            .back()
+            .map(|e| e.timestamp)
+            .unwrap_or_else(SystemTime::now);
         let window = Duration::from_secs_f64(TRAVERSAL_WINDOW_SECS);
-        let mut subfolders: HashSet<String> = HashSet::new();
+        let mut subfolders: HashSet<&Path> = HashSet::new();
         let mut count_in_window = 0usize;
         for e in self.activity_window.iter().rev() {
             if now.duration_since(e.timestamp).unwrap_or_default() > window {
                 break;
             }
             count_in_window += 1;
-            let parent = e.file_path.parent();
-            let sub = parent
-                .and_then(|p| p.to_str())
-                .unwrap_or("")
-                .to_string();
-            if !sub.is_empty() {
-                subfolders.insert(sub);
+            if let Some(parent) = e.file_path.parent() {
+                subfolders.insert(parent);
             }
         }
         if count_in_window < 2 {
@@ -90,7 +89,8 @@ impl ProcessFamily {
         }
         let ratio = subfolders.len() as f32 / count_in_window as f32;
         if ratio >= TRAVERSAL_DIFFERENT_SUBFOLDERS_RATIO {
-            (ratio - TRAVERSAL_DIFFERENT_SUBFOLDERS_RATIO) / (1.0 - TRAVERSAL_DIFFERENT_SUBFOLDERS_RATIO).max(0.01)
+            (ratio - TRAVERSAL_DIFFERENT_SUBFOLDERS_RATIO)
+                / (1.0 - TRAVERSAL_DIFFERENT_SUBFOLDERS_RATIO).max(0.01)
         } else {
             ratio / TRAVERSAL_DIFFERENT_SUBFOLDERS_RATIO
         }
@@ -115,23 +115,26 @@ impl ProcessFamily {
         if self.activity_window.len() < RAMP_UP_OLDER + RAMP_UP_RECENT {
             return 0.0;
         }
-        let ops: Vec<&ActivityEntry> = self.activity_window.iter().collect();
-        let n = ops.len();
-        let recent: Vec<_> = ops[n.saturating_sub(RAMP_UP_RECENT)..].to_vec();
-        let older: Vec<_> = ops[n.saturating_sub(RAMP_UP_RECENT + RAMP_UP_OLDER)..n.saturating_sub(RAMP_UP_RECENT)].to_vec();
-        if older.is_empty() {
-            return if recent.len() >= 5 { 0.5 } else { 0.0 };
-        }
-        let recent_io = recent
+        let is_io = |entry: &&ActivityEntry| {
+            matches!(entry.op, FileOp::Open | FileOp::Read | FileOp::Write)
+        };
+        let recent_io = self
+            .activity_window
             .iter()
-            .filter(|e| matches!(e.op, FileOp::Open | FileOp::Read | FileOp::Write))
+            .rev()
+            .take(RAMP_UP_RECENT)
+            .filter(is_io)
             .count();
-        let older_io = older
+        let older_io = self
+            .activity_window
             .iter()
-            .filter(|e| matches!(e.op, FileOp::Open | FileOp::Read | FileOp::Write))
+            .rev()
+            .skip(RAMP_UP_RECENT)
+            .take(RAMP_UP_OLDER)
+            .filter(is_io)
             .count();
         let recent_rate = recent_io as f32 / RAMP_UP_RECENT as f32;
-        let older_rate = older_io as f32 / older.len() as f32;
+        let older_rate = older_io as f32 / RAMP_UP_OLDER as f32;
         if older_rate <= 0.0 {
             return recent_rate.min(1.0);
         }
@@ -159,7 +162,7 @@ impl BehaviorEngine {
     pub fn new() -> Self {
         Self {
             families: HashMap::new(),
-            system: sysinfo::System::new_all(),
+            system: sysinfo::System::new(),
             // Already "expired" so the first call still refreshes.
             last_refresh: Instant::now() - PROCESS_REFRESH_INTERVAL,
         }
@@ -169,6 +172,9 @@ impl BehaviorEngine {
     /// The process table is only rescanned at most every PROCESS_REFRESH_INTERVAL --
     /// scanning it on every single file event is a major bottleneck under real event load.
     pub fn resolve_root_pid(&mut self, pid: u32) -> u32 {
+        if pid == 0 {
+            return 0;
+        }
         let now = Instant::now();
         if now.duration_since(self.last_refresh) > PROCESS_REFRESH_INTERVAL {
             self.system.refresh_processes();
@@ -190,19 +196,33 @@ impl BehaviorEngine {
     }
 
     /// Record a file operation and return the family scores for the process family.
-    pub fn update(
-        &mut self,
-        pid: u32,
-        path: &Path,
-        entropy: f64,
-        op: FileOp,
-    ) -> FamilyScore {
+    pub fn update(&mut self, pid: u32, path: &Path, entropy: f64, op: FileOp) -> FamilyScore {
         let root_pid = self.resolve_root_pid(pid);
+        if self.families.len() >= 256 && !self.families.contains_key(&root_pid) {
+            if let Some(oldest) = self
+                .families
+                .iter()
+                .min_by_key(|(_, f)| f.activity_window.back().map(|e| e.timestamp))
+                .map(|(pid, _)| *pid)
+            {
+                self.families.remove(&oldest);
+            }
+        }
         let family = self
             .families
             .entry(root_pid)
             .or_insert_with(|| ProcessFamily::new(root_pid));
-        family.member_pids.insert(pid);
+        if family.member_pids.len() < 256 {
+            family.member_pids.insert(pid);
+        }
+        if family.activity_window.back().is_some_and(|e| {
+            SystemTime::now()
+                .duration_since(e.timestamp)
+                .unwrap_or_default()
+                > Duration::from_secs(10)
+        }) {
+            family.activity_window.clear();
+        }
         let entry = ActivityEntry {
             timestamp: SystemTime::now(),
             op,

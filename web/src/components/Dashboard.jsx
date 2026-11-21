@@ -1,76 +1,121 @@
-import { useEffect, useState } from "react";
-import { getStatus, getDetections } from "../services/api.js";
+import { getDashboard } from "../services/api.js";
+import { usePoll } from "../hooks/usePoll.js";
 import StatCard from "./StatCard.jsx";
 
+const kinds = {
+  ransomwareold: "Ransomware pattern",
+  ransomwaremodern: "Rapid ransomware pattern",
+  wipermalware: "Deletion burst",
+  ransomwaretraverser: "Coordinated file changes",
+  honeytokentouched: "Canary file changed",
+  highentropystorm: "High entropy burst",
+  benign: "Normal activity",
+};
 export default function Dashboard() {
-  const [status, setStatus] = useState(null);
-  const [detections, setDetections] = useState([]);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function poll() {
-      try {
-        const [s, d] = await Promise.all([getStatus(), getDetections()]);
-        if (!cancelled) {
-          setStatus(s);
-          setDetections(d.detections ?? []);
-          setError(null);
-        }
-      } catch (e) {
-        if (!cancelled) setError(e.message);
-      }
-    }
-
-    poll();
-    const interval = setInterval(poll, 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, []);
-
+  const { data, error, loading } = usePoll(getDashboard);
+  const status = data?.status;
+  const detections = data?.detections ?? [];
+  const health = status?.monitoring_health;
   return (
-    <div>
-      <h2 className="text-2xl font-bold mb-6">Dashboard</h2>
-
+    <section aria-labelledby="dashboard-title" aria-busy={loading}>
+      <h2 id="dashboard-title" className="page-title">
+        Dashboard
+      </h2>
       {error && (
-        <div className="mb-4 text-sm text-red-400">
-          Could not reach anton_api at http://localhost:8080 ({error}). Is it running?
-        </div>
+        <p role="alert" className="error-message">
+          Connection unavailable. Retrying… {error}
+        </p>
       )}
-
-      <div className="flex gap-4 mb-4">
-        <StatCard label="Threats Blocked" value={status?.threats_blocked ?? "—"} accent="text-red-400" />
-        <StatCard label="Files Monitored" value={status?.files_monitored ?? "—"} accent="text-blue-400" />
-        <StatCard label="Heuristic Score" value={status ? `${status.heuristic_score}%` : "—"} accent="text-green-400" />
-        <StatCard label="Scans Run" value={status?.scan_count ?? "—"} accent="text-purple-400" />
+      {loading && (
+        <p role="status" className="muted mb-4">
+          Loading system status…
+        </p>
+      )}
+      {status?.demo_mode && (
+        <p className="notice">
+          Demo environment · File count and heuristic score are sample values.
+          Monitoring applies to TestRun.
+        </p>
+      )}
+      <div className="grid grid-cols-1 min-[400px]:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
+        <StatCard
+          label="High-severity Detections"
+          value={status?.threats_blocked ?? "—"}
+          accent="text-red-400"
+        />
+        <StatCard
+          label="Files Monitored (sample)"
+          value={status?.files_monitored ?? "—"}
+          accent="text-blue-400"
+        />
+        <StatCard
+          label="Heuristic Score (sample)"
+          value={status ? `${status.heuristic_score}%` : "—"}
+          accent="text-green-400"
+        />
+        <StatCard
+          label="Scan Records"
+          value={status?.scan_count ?? "—"}
+          accent="text-purple-400"
+        />
       </div>
-
-      <div className="flex gap-4 mb-8 text-sm">
-        <span className={status?.ai_enabled ? "text-green-400" : "text-slate-500"}>
-          AI Detection: {status?.ai_enabled ? "Enabled" : "Disabled"}
+      <div
+        className="flex flex-wrap gap-x-6 gap-y-2 mb-8 text-sm"
+        role="status"
+      >
+        <span>
+          AI Detection:{" "}
+          {status
+            ? status.ai_enabled
+              ? "Enabled"
+              : "Disabled — canaries remain active"
+            : "—"}
         </span>
-        <span className={status?.monitoring_enabled ? "text-green-400" : "text-slate-500"}>
-          Monitoring: {status?.monitoring_enabled ? "Enabled" : "Disabled"}
+        <span
+          className={
+            health === "degraded" || health === "stopped"
+              ? "text-amber-300"
+              : "text-slate-300"
+          }
+        >
+          Monitoring: {health ?? "—"}
         </span>
-      </div>
-
-      <h3 className="text-lg font-semibold mb-3">Recent Detections</h3>
-      <div className="bg-slate-900 border border-slate-800 rounded-lg divide-y divide-slate-800">
-        {detections.length === 0 && (
-          <div className="p-4 text-sm text-slate-500">No detections yet.</div>
+        {status?.dropped_events > 0 && (
+          <span className="text-amber-300">
+            {status.dropped_events} event batches dropped · Restart monitoring
+          </span>
         )}
-        {detections.map((d, i) => (
-          <div key={i} className="p-3 flex justify-between text-sm">
-            <span className={d.level === "Critical" || d.level === "High" ? "text-red-400" : "text-slate-300"}>
-              {d.kind}
+      </div>
+      <h3 className="text-lg font-semibold mb-3">Recent Detections</h3>
+      <div className="panel divide-y divide-slate-800">
+        {!loading && detections.length === 0 && (
+          <p className="p-4 muted">No detections yet.</p>
+        )}
+        {detections.map((detection, index) => (
+          <div
+            key={`${detection.timestamp}-${index}`}
+            className="p-4 flex items-start gap-4 justify-between text-sm"
+          >
+            <div className="min-w-0">
+              <p
+                className={
+                  ["critical", "high"].includes(detection.level)
+                    ? "text-red-400 font-medium"
+                    : "text-slate-300"
+                }
+              >
+                {kinds[detection.kind] ?? detection.kind}
+              </p>
+              {detection.file_path && (
+                <p className="muted break-words mt-1">{detection.file_path}</p>
+              )}
+            </div>
+            <span className="shrink-0 text-slate-400">
+              {Math.round(detection.confidence * 100)}% · {detection.level}
             </span>
-            <span className="text-slate-500">{Math.round(d.confidence * 100)}%</span>
           </div>
         ))}
       </div>
-    </div>
+    </section>
   );
 }

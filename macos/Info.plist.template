@@ -9,7 +9,7 @@
     <key>CFBundleIdentifier</key>
     <string>dev.anton.desktop</string>
     <key>CFBundleExecutable</key>
-    <string>anton_desktop</string>
+    <string>anton</string>
     <key>CFBundleVersion</key>
     <string>__VERSION__</string>
     <key>CFBundleShortVersionString</key>

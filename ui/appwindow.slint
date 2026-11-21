@@ -66,6 +66,7 @@ component SidebarButton inherits Rectangle {
 }
 
 component SettingToggle inherits Rectangle {
+    in property <bool> enabled: true;
     in property <string> label;
     in property <string> description;
     in property <bool> checked;
@@ -91,6 +92,7 @@ component SettingToggle inherits Rectangle {
         Rectangle { horizontal-stretch: 1; }
 
         CheckBox {
+            enabled: root.enabled;
             checked: root.checked;
             toggled => { root.toggled(self.checked); }
         }
@@ -140,6 +142,8 @@ export component AppWindow inherits Window {
     in-out property <[string]> diagnostic_log: [];
 
     // ── Callbacks (Rust wires these in desktop.rs::run_desktop) ─────────
+    in-out property <bool> operation_busy: false;
+
     callback toggled_setting(string, bool);
     callback run_self_test();
     callback add_folder_path(string);
@@ -200,7 +204,7 @@ export component AppWindow inherits Window {
                 Text {
                     text: root.protection_status;
                     font-size: 11px;
-                    color: root.protection_status == "Protected" ? #22c55e : #f59e0b;
+                    color: root.protection_status == "Monitoring TestRun" ? #22c55e : #f59e0b;
                     wrap: word-wrap;
                 }
             }
@@ -240,10 +244,12 @@ export component AppWindow inherits Window {
                         spacing: 12px;
                         Button {
                             text: "Run Ransomware Demo";
+                            enabled: !root.operation_busy;
                             clicked => { root.run_demo(); }
                         }
                         Button {
                             text: "Revert Demo";
+                            enabled: !root.operation_busy;
                             clicked => { root.revert_demo(); }
                         }
                     }
@@ -325,7 +331,7 @@ export component AppWindow inherits Window {
                         }
                         Button {
                             text: "Scan";
-                            enabled: root.scan_status != "Scanning";
+                            enabled: !root.operation_busy;
                             clicked => { root.request_scan(); }
                         }
                     }
@@ -339,6 +345,7 @@ export component AppWindow inherits Window {
 
                     ProgressIndicator {
                         progress: root.scan_progress / 100.0;
+                        indeterminate: root.scan_status == "Scanning";
                         height: 8px;
                     }
                     Text {
@@ -371,26 +378,44 @@ export component AppWindow inherits Window {
                     }
 
                     SettingToggle {
+                        enabled: !root.operation_busy;
+                        label: "Real-time Monitoring";
+                        description: "Watch the TestRun demo directory";
+                        checked: root.monitoring_enabled;
+                        toggled(v) => { root.monitoring_enabled = v; root.toggled_setting("monitoring", v); }
+                    }
+                    SettingToggle {
+                        enabled: !root.operation_busy;
+                        label: "AI Detection";
+                        description: "Heuristic analysis; canaries remain active when disabled";
+                        checked: root.ai_enabled;
+                        toggled(v) => { root.ai_enabled = v; root.toggled_setting("ai", v); }
+                    }
+                    SettingToggle {
+                        enabled: !root.operation_busy;
                         label: "Extension Monitoring";
                         description: "Flag mass renames to known ransomware extensions";
                         checked: root.setting_extension_enabled;
                         toggled(v) => { root.setting_extension_enabled = v; root.toggled_setting("extension", v); }
                     }
                     SettingToggle {
+                        enabled: !root.operation_busy;
                         label: "Rate Limiting";
                         description: "Flag abnormally fast bursts of file changes";
                         checked: root.setting_rate_limit_enabled;
                         toggled(v) => { root.setting_rate_limit_enabled = v; root.toggled_setting("rate_limit", v); }
                     }
                     SettingToggle {
+                        enabled: !root.operation_busy;
                         label: "Entropy Analysis";
                         description: "Flag files whose contents look encrypted";
                         checked: root.setting_entropy_enabled;
                         toggled(v) => { root.setting_entropy_enabled = v; root.toggled_setting("entropy", v); }
                     }
                     SettingToggle {
+                        enabled: false;
                         label: "Network / DNS Analysis";
-                        description: "Flag connections to known-bad domains";
+                        description: "Unavailable: no network event source is connected";
                         checked: root.setting_dns_enabled;
                         toggled(v) => { root.setting_dns_enabled = v; root.toggled_setting("dns", v); }
                     }
@@ -398,7 +423,7 @@ export component AppWindow inherits Window {
                     Rectangle { height: 8px; }
 
                     Text {
-                        text: "Protected Folders";
+                        text: "Saved Folders (not actively monitored)";
                         font-size: 14px;
                         font-weight: 600;
                         color: #b8c0d4;
@@ -465,7 +490,7 @@ export component AppWindow inherits Window {
                         spacing: 10px;
                         Button {
                             text: root.diagnostic_state == "running" ? "Running..." : "Run Self-Test";
-                            enabled: root.diagnostic_state != "running";
+                            enabled: !root.operation_busy;
                             clicked => { root.run_self_test(); }
                         }
                         Text {

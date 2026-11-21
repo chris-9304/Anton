@@ -1,3 +1,4 @@
+use crate::behavior_engine::BehaviorEngine;
 use crate::config::Config;
 use crate::detectors::{
     file_event_to_op, on_file_event, BehaviorAnalyzer, EntropyAnalyzer, ExtensionAnalyzer,
@@ -6,7 +7,6 @@ use crate::detectors::{
 use crate::models::{
     AnalysisConfig, DetectionResult, DetectionSignals, FileEvent, ThreatKind, ThreatLevel,
 };
-use crate::behavior_engine::BehaviorEngine;
 use std::fs::File;
 use std::io::Read;
 
@@ -46,41 +46,42 @@ impl AiEngine {
     }
 
     pub fn on_event(&mut self, ev: &FileEvent) {
+        self.on_event_with_config(ev, &AnalysisConfig::default());
+    }
+
+    pub fn on_event_with_config(&mut self, ev: &FileEvent, config: &AnalysisConfig) {
         if !self.enabled {
             return;
         }
-        self.freq.push(ev);
-        self.ext.push(ev);
+        self.freq.evict(ev.timestamp);
+        self.ext.evict(ev.timestamp);
+        self.ent.evict(ev.timestamp);
+        self.beh.evict(ev.timestamp);
+        if config.enable_rate_limit {
+            self.freq.push(ev);
+        }
+        if config.enable_extensions {
+            self.ext.push(ev);
+        }
         self.beh.push(ev);
-
-        // Read the file's header once and share it between EntropyAnalyzer and the
-        // behavior engine below, instead of each doing its own independent open+read
-        // of the same file for the same event.
-        let mut header_buf = vec![0u8; ENTROPY_HEADER_BYTES];
-        let header_len = if ev.event_type == crate::models::EventType::Modified {
+        let mut header = [0u8; ENTROPY_HEADER_BYTES];
+        let n = if config.enable_entropy && ev.event_type == crate::models::EventType::Modified {
             File::open(&ev.src)
                 .ok()
-                .and_then(|mut f| f.read(&mut header_buf).ok())
+                .and_then(|mut file| file.read(&mut header).ok())
                 .unwrap_or(0)
         } else {
             0
         };
-        let header: Option<&[u8]> = if header_len > 0 { Some(&header_buf[..header_len]) } else { None };
-        self.ent.push(ev, header);
-
-        // Feed into Owlyshield-like behavior engine (pid=0 when watcher doesn't provide it).
-        let entropy = match header {
-            Some(h) => crate::crypto::CryptoEngine::calculate_entropy(h) as f32,
-            None => 0.0,
+        let entropy = if n > 0 {
+            let entropy = crate::crypto::CryptoEngine::calculate_entropy(&header[..n]);
+            self.ent.push_sample(ev.timestamp, entropy);
+            entropy as f32
+        } else {
+            0.0
         };
         let op = file_event_to_op(ev, entropy);
-        let level = on_file_event(
-            &mut self.behavior_engine,
-            0,
-            &ev.src,
-            entropy,
-            op,
-        );
+        let level = on_file_event(&mut self.behavior_engine, 0, &ev.src, entropy, op);
         if level != ThreatLevel::None {
             self.last_behavior_threat = Some(level);
         }
@@ -141,7 +142,7 @@ impl AiEngine {
 
         let rename_burst = self.freq.rename_burst();
         let modify_burst = self.freq.modify_burst();
-        let delete_burst = self.freq.delete_burst();
+        let delete_burst = config.enable_rate_limit && self.freq.delete_burst();
 
         // 4-layer combo: Entropy > 0.9 AND Frequency > 0.8 -> High Threat (Ransomware / encryption storm)
         if ent > 0.9 && freq > 0.8 {

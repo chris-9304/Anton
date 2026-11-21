@@ -1,3 +1,4 @@
 fn main() {
-    slint_build::compile("ui/appwindow.slint").unwrap();
+    #[cfg(feature = "desktop")]
+    slint_build::compile("ui/appwindow.slint").expect("compile desktop UI");
 }

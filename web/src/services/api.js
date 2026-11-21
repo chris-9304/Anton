@@ -1,29 +1,60 @@
-// Thin client for anton_api (src/api_server.rs), which listens on :8080 and already
-// sets CorsLayer::permissive(), so this can be called directly from the Vite dev
-// server (:5173) or the built bundle without a proxy.
-const BASE_URL = "http://localhost:8080";
+export const BASE_URL = (
+  import.meta.env?.VITE_API_BASE_URL ?? "http://localhost:8080"
+).replace(/\/$/, "");
 
-async function get(path) {
-  const res = await fetch(`${BASE_URL}${path}`);
-  if (!res.ok) throw new Error(`GET ${path} failed: ${res.status}`);
-  return res.json();
+export async function request(
+  path,
+  { method = "GET", body, signal, timeout = 10000 } = {},
+) {
+  const controller = new AbortController();
+  const abort = () => controller.abort(signal.reason);
+  if (signal?.aborted) abort();
+  else signal?.addEventListener("abort", abort, { once: true });
+  const timer = setTimeout(
+    () =>
+      controller.abort(new DOMException("Request timed out", "TimeoutError")),
+    timeout,
+  );
+  try {
+    const response = await fetch(`${BASE_URL}${path}`, {
+      method,
+      signal: controller.signal,
+      headers:
+        body === undefined ? undefined : { "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    if (!response.ok) throw new Error(`Request failed (${response.status})`);
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
+  }
 }
 
-async function post(path, body) {
-  const res = await fetch(`${BASE_URL}${path}`, {
+export const getStatus = (options) => request("/api/status", options);
+export const getDetections = (options) => request("/api/detections", options);
+export const getLogs = (options) => request("/api/logs", options);
+export const getScans = (options) => request("/api/scans", options);
+export const setAiEnabled = (enabled, options) =>
+  request("/api/settings/ai", {
+    ...options,
     method: "POST",
-    headers: body ? { "content-type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
+    body: { enabled },
   });
-  if (!res.ok) throw new Error(`POST ${path} failed: ${res.status}`);
-  return res.json();
+export const setMonitoringEnabled = (enabled, options) =>
+  request("/api/settings/monitoring", {
+    ...options,
+    method: "POST",
+    body: { enabled },
+  });
+export const quickScan = (options) =>
+  request("/api/scan/quick", { ...options, method: "POST" });
+export const fullScan = (options) =>
+  request("/api/scan/full", { ...options, method: "POST" });
+export async function getDashboard(options) {
+  const [status, detections] = await Promise.all([
+    getStatus(options),
+    getDetections(options),
+  ]);
+  return { status, detections: detections.detections ?? [] };
 }
-
-export const getStatus = () => get("/api/status");
-export const getDetections = () => get("/api/detections");
-export const getLogs = () => get("/api/logs");
-export const getScans = () => get("/api/scans");
-export const setAiEnabled = (enabled) => post("/api/settings/ai", { enabled });
-export const setMonitoringEnabled = (enabled) => post("/api/settings/monitoring", { enabled });
-export const quickScan = () => post("/api/scan/quick");
-export const fullScan = () => post("/api/scan/full");

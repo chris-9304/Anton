@@ -24,22 +24,39 @@ pub fn sandbox_path(config: &Config) -> PathBuf {
 /// Create sandbox dir and 100 dummy files (text, fake images, fake PDFs). Deploy canaries.
 pub fn setup_sandbox(config: &Config) -> std::io::Result<()> {
     let root = sandbox_path(config);
-    fs::create_dir_all(&root)?;
+    if config.test_run_dir.is_symlink() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Sandbox parent cannot be a symbolic link",
+        ));
+    }
+    fs::create_dir_all(&config.test_run_dir)?;
+    // Ownership starts here; never reuse or truncate somebody else's sandbox.
+    fs::create_dir(&root)?;
 
     // ~50 .txt, ~25 .jpg (dummy), ~25 .pdf (dummy)
     for i in 0..50 {
         let p = root.join(format!("doc_{}.txt", i));
-        let mut f = File::create(&p)?;
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&p)?;
         writeln!(f, "Sample document {} - safe content for testing.", i)?;
     }
     for i in 0..25 {
         let p = root.join(format!("image_{}.jpg", i));
-        let mut f = File::create(&p)?;
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&p)?;
         f.write_all(b"\xff\xd8\xff fake jpeg header\n")?;
     }
     for i in 0..25 {
         let p = root.join(format!("report_{}.pdf", i));
-        let mut f = File::create(&p)?;
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&p)?;
         f.write_all(b"%PDF-1.4 fake pdf\n")?;
     }
 
@@ -68,7 +85,7 @@ pub fn run_cordyceps_mimic(config: &Config, stop_flag: Arc<AtomicBool>) {
         if stop_flag.load(Ordering::SeqCst) {
             break;
         }
-        if p.is_file() {
+        if fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_file()) {
             let mut new_path = p.clone();
             new_path.set_extension("cordyceps");
             if fs::rename(&p, &new_path).is_ok() {
@@ -89,7 +106,7 @@ pub fn run_fast_rust_mimic(config: &Config, stop_flag: Arc<AtomicBool>) {
         Ok(rd) => rd
             .filter_map(|e| e.ok())
             .map(|e| e.path())
-            .filter(|p| p.is_file())
+            .filter(|p| fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_file()))
             .collect(),
         _ => return,
     };
@@ -128,13 +145,11 @@ pub fn run_traverser_mimic(config: &Config, stop_flag: Arc<AtomicBool>) {
             break;
         }
         let p = root.join(name);
-        if p.exists() {
+        if fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_file()) {
             let _ = File::options()
                 .write(true)
                 .open(&p)
                 .and_then(|mut f| f.write_all(b"touched"));
-        } else {
-            let _ = File::create(&p).and_then(|mut f| f.write_all(b"canary"));
         }
         thread::sleep(Duration::from_millis(10));
     }
@@ -145,7 +160,7 @@ pub fn run_traverser_mimic(config: &Config, stop_flag: Arc<AtomicBool>) {
         }
         for name in HONEYTOKEN_NAMES {
             let p = root.join(name);
-            if p.exists() {
+            if fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_file()) {
                 let _ = std::fs::write(&p, b"x");
             }
         }
@@ -169,12 +184,53 @@ pub fn run_self_test(
     detection_occurred: Arc<AtomicBool>,
     testing_mode: Arc<AtomicBool>,
 ) -> SelfTestResult {
+    run_self_test_cancellable(
+        config,
+        log_tx,
+        detection_occurred,
+        testing_mode,
+        Arc::new(AtomicBool::new(false)),
+    )
+}
+
+pub fn run_self_test_cancellable(
+    config: Config,
+    log_tx: std::sync::mpsc::Sender<String>,
+    detection_occurred: Arc<AtomicBool>,
+    testing_mode: Arc<AtomicBool>,
+    cancel: Arc<AtomicBool>,
+) -> SelfTestResult {
+    run_self_test_with_settings(
+        config,
+        crate::app_settings::AppSettings::default(),
+        log_tx,
+        detection_occurred,
+        testing_mode,
+        cancel,
+    )
+}
+
+pub fn run_self_test_with_settings(
+    config: Config,
+    settings: crate::app_settings::AppSettings,
+    log_tx: std::sync::mpsc::Sender<String>,
+    detection_occurred: Arc<AtomicBool>,
+    testing_mode: Arc<AtomicBool>,
+    cancel: Arc<AtomicBool>,
+) -> SelfTestResult {
     let send = |s: &str| {
         let _ = log_tx.send(s.to_string());
     };
 
-    testing_mode.store(true, Ordering::SeqCst);
     detection_occurred.store(false, Ordering::SeqCst);
+    testing_mode.store(false, Ordering::SeqCst);
+    if !settings.monitoring_enabled {
+        send("Result: FAILED — Enable monitoring before running the self-test.");
+        return SelfTestResult::Fail {
+            reason: "Monitoring is paused".into(),
+        };
+    }
+    testing_mode.store(true, Ordering::SeqCst);
 
     send("Creating Sandbox...");
     if let Err(e) = setup_sandbox(&config) {
@@ -185,7 +241,31 @@ pub fn run_self_test(
     }
     send("Sandbox ready. 100 dummy files + honeytokens created.");
 
-    let stop_flag = detection_occurred.clone();
+    // Subscribe after setup so the test cannot pass by detecting its own canary deployment.
+    let watcher_config = Config {
+        test_run_dir: sandbox_path(&config),
+        ..config.clone()
+    };
+    let callback_detection = detection_occurred.clone();
+    let mut watcher = match crate::watcher::start_watcher(
+        watcher_config,
+        Arc::new(std::sync::Mutex::new(settings)),
+        move |detection| {
+            if detection.level >= crate::models::ThreatLevel::High {
+                callback_detection.store(true, Ordering::Release);
+            }
+        },
+    ) {
+        Ok(watcher) => watcher,
+        Err(error) => {
+            cleanup_sandbox(&config);
+            testing_mode.store(false, Ordering::Release);
+            return SelfTestResult::Fail {
+                reason: format!("Diagnostic watcher failed: {error}"),
+            };
+        }
+    };
+    let stop_flag = Arc::new(AtomicBool::new(false));
     let start = Instant::now();
     let timeout = Duration::from_secs(25);
 
@@ -205,28 +285,30 @@ pub fn run_self_test(
     let t_trav = thread::spawn(move || run_traverser_mimic(&cfg_t, stop_t));
 
     let mut detected = false;
-    while start.elapsed() < timeout {
+    while start.elapsed() < timeout && !cancel.load(Ordering::Acquire) {
         if detection_occurred.load(Ordering::SeqCst) {
             detected = true;
             let elapsed = start.elapsed().as_secs_f32();
-            send(&format!("Attack Detected! Threat blocked in {:.1}s.", elapsed));
+            send(&format!("Attack detected in {:.1}s.", elapsed));
             break;
         }
         thread::sleep(Duration::from_millis(100));
     }
 
+    stop_flag.store(true, Ordering::SeqCst);
     let _ = t_cord.join();
     let _ = t_fast.join();
     let _ = t_trav.join();
 
+    watcher.stop();
     send("Cleaning up...");
     cleanup_sandbox(&config);
     testing_mode.store(false, Ordering::SeqCst);
 
     if detected {
-        send("Result: PASSED — System is Protected.");
+        send("Result: PASSED — Sandbox attack detected.");
         SelfTestResult::Pass {
-            message: "System is Protected".into(),
+            message: "Sandbox attack detected".into(),
         }
     } else {
         send("Result: FAILED — No detection triggered.");
@@ -247,6 +329,7 @@ pub fn schedule_cleanup_timeout(config: Config) {
 
 /// Same as `schedule_cleanup_timeout`, but for GUI callers: uses a Slint timer instead of
 /// parking a dedicated OS thread for the full 30 minutes.
+#[cfg(feature = "desktop")]
 pub fn schedule_cleanup_timeout_gui(config: Config) {
     slint::Timer::single_shot(Duration::from_secs(CLEANUP_TIMEOUT_SECS), move || {
         cleanup_sandbox(&config);

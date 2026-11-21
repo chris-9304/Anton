@@ -8,19 +8,19 @@
 
 ## How to Run the Ransomware Demo
 
-1. **Build both binaries:**  
-   `cargo build --release`  
+1. **Build both binaries:**
+   `cargo build --release`
    This produces `target/release/anton` and `target/release/demo_ransomware` (macOS/Linux;
    `anton.exe` / `demo_ransomware.exe` on Windows).
 
-2. **From GUI:**  
+2. **From GUI:**
    Open Anton, go to **Dashboard**, click **Run Ransomware Demo**. The app will back up TestRun, start the watcher, run the sandboxed demo ransomware, then stop it and restore files. Status appears in Protection Status and Threat History.
 
-3. **From CLI:**  
-   `anton demo`  
-   Backs up TestRun, starts the watcher, runs `demo_ransomware` (sandboxed to TestRun), waits for detection or 45s, kills the ransomware, then reverts (restores files). Always ends with "Ransomware stopped. Files restored."
+3. **From CLI:**
+   `anton demo`
+   Backs up TestRun, starts the watcher, runs `demo_ransomware` (sandboxed to TestRun), waits for detection or 45s, kills the ransomware, then reverts (restores files). Reports actual detection and restore results; failures return a nonzero exit status.
 
-4. **Manual revert:**  
+4. **Manual revert:**
    `anton revert` or use the **Revert Demo** button in the Dashboard to restore TestRun from backup or remove locked/encrypted files and reset sample files.
 
 ## Demo Ransomware (Sandboxed)
@@ -32,7 +32,7 @@
 
 ## Fallback / No-Failure Behavior
 
-- Even if Anton does not detect the ransomware in time, the **demo flow** still stops the ransomware process (after timeout or child exit), runs **revert**, and removes locked/encrypted files and restores from backup. So the demo always ends in a restored state.
+- Even if Anton does not detect the ransomware in time, the **demo flow** still stops the ransomware process (after timeout or child exit), runs **revert**, and removes locked/encrypted files and restores from backup. So the demo attempts verified restoration and retains the backup if restoration fails.
 - **Revert** restores from `TestRun_backup` if it exists; otherwise deletes files with encrypted extensions (e.g. `.cordyceps`, `.zombie`, `.locked`, `.crypt`) in TestRun and repopulates sample files.
 
 ## Key Points for Hackathon Q&A
@@ -54,7 +54,7 @@
 
 ### Integration
 
-- Backend (watcher, detectors, simulators, revert) and frontend (Slint UI) are connected: Dashboard buttons **Run Ransomware Demo** and **Revert Demo** trigger the same backup → run demo → kill → revert logic (via subprocess or direct revert). Status and activity are shown in the UI.
+- Backend (watcher, detectors, simulators, revert) and frontend (Slint UI) are connected: Dashboard buttons **Run Ransomware Demo** and **Revert Demo** trigger the same backup → run demo → kill → revert logic (through the shared cancellable demo controller or verified restore). Status and activity are shown in the UI.
 
 ## Demo Environment Setup
 

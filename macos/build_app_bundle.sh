@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # Builds Anton.app: a native macOS app bundle wrapping the Slint desktop GUI.
 #
-# All three binaries are co-located in Contents/MacOS/ because both
-# main.rs::run_demo() (looks for a sibling demo_ransomware next to the running exe) and
-# desktop.rs's on_run_demo callback (relaunches the sibling anton binary with `demo`)
-# resolve their sibling binaries by relative path from std::env::current_exe().
+# The default anton executable already provides the desktop UI; include it once,
+# with its sibling sandbox simulator, rather than shipping two copies of the GUI.
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -14,14 +12,13 @@ APP_NAME="Anton.app"
 VERSION="$(grep -m1 '^version' Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
 
 echo "[*] Building release binaries..."
-cargo build --release --bin anton_desktop --bin anton --bin demo_ransomware
+cargo build --locked --release --bin anton --bin demo_ransomware
 
 echo "[*] Assembling ${APP_NAME}..."
 rm -rf "${APP_NAME}"
 mkdir -p "${APP_NAME}/Contents/MacOS"
 mkdir -p "${APP_NAME}/Contents/Resources"
 
-cp target/release/anton_desktop "${APP_NAME}/Contents/MacOS/"
 cp target/release/anton "${APP_NAME}/Contents/MacOS/"
 cp target/release/demo_ransomware "${APP_NAME}/Contents/MacOS/"
 

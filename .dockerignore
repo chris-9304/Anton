@@ -1,0 +1,12 @@
+.git/
+target/
+web/node_modules/
+web/dist/
+graphify-out/
+TestRun/
+TestRun_backup/
+ShadowCopies/
+*.app/
+*.dmg
+demo_log.txt*
+.claude/

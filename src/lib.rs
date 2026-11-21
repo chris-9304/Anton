@@ -1,25 +1,46 @@
+pub mod ai;
 pub mod app_settings;
 pub mod behavior_engine;
 pub mod canary;
 pub mod config;
-pub mod models;
-pub mod ai;
-pub mod detectors;
-pub mod watcher;
-pub mod simulators;
-pub mod simulation;
-pub mod recovery;
 pub mod crypto;
-pub mod desktop;
+pub mod demo;
 pub mod demo_log;
+#[cfg(feature = "desktop")]
+pub mod desktop;
+pub mod detectors;
+pub mod models;
+pub mod recovery;
+pub mod scanner;
+pub mod simulation;
+pub mod simulators;
+pub mod watcher;
 
 use std::io::Read;
 use std::path::Path;
 
 const SUSPICIOUS_EXTENSIONS: &[&str] = &[
-    "locked", "crypt", "cordyceps", "encrypted", "encrypt", "vault", "secure",
-    "xxx", "zzz", "aaa", "micro", "crypto", "kraken", "teslacrypt",
-    "cerber", "locky", "petya", "wannacry", "ryuk", "maze", "zombie",
+    "locked",
+    "crypt",
+    "cordyceps",
+    "encrypted",
+    "encrypt",
+    "vault",
+    "secure",
+    "xxx",
+    "zzz",
+    "aaa",
+    "micro",
+    "crypto",
+    "kraken",
+    "teslacrypt",
+    "cerber",
+    "locky",
+    "petya",
+    "wannacry",
+    "ryuk",
+    "maze",
+    "zombie",
 ];
 
 // Only the first N bytes are read to check entropy -- reading whole files (some scans
@@ -28,22 +49,25 @@ const SUSPICIOUS_EXTENSIONS: &[&str] = &[
 const SUSPICIOUS_HEADER_BYTES: usize = 4096;
 
 pub fn check_file_suspicious(path: &Path) -> bool {
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-    if SUSPICIOUS_EXTENSIONS.contains(&ext.as_str())
+    inspect_file_suspicious(path).unwrap_or(false)
+}
+
+pub fn inspect_file_suspicious(path: &Path) -> std::io::Result<bool> {
+    if !std::fs::symlink_metadata(path)?.file_type().is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Expected regular file",
+        ));
+    }
+    let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if SUSPICIOUS_EXTENSIONS
+        .iter()
+        .any(|e| extension.eq_ignore_ascii_case(e))
     {
-        return true;
+        return Ok(true);
     }
-    if let Ok(mut f) = std::fs::File::open(path) {
-        let mut buf = vec![0u8; SUSPICIOUS_HEADER_BYTES];
-        if let Ok(n) = f.read(&mut buf) {
-            if n > 0 && crypto::CryptoEngine::calculate_entropy(&buf[..n]) > 7.5 {
-                return true;
-            }
-        }
-    }
-    false
+    let mut file = std::fs::File::open(path)?;
+    let mut buffer = [0u8; SUSPICIOUS_HEADER_BYTES];
+    let count = file.read(&mut buffer)?;
+    Ok(count > 0 && crypto::CryptoEngine::calculate_entropy(&buffer[..count]) > 7.5)
 }

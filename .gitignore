@@ -29,3 +29,8 @@ venv/
 /ShadowCopies/
 /demo_log.txt
 /protected_folders.json
+
+# Generated demo backup and rotated transcripts
+/TestRun_backup/
+/demo_log.txt.1
+/.anton-backup-*/

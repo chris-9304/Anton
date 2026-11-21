@@ -1,17 +1,16 @@
-use anyhow::{Result, anyhow};
+use aes_gcm::{aead::OsRng as AesOsRng, Aes256Gcm, Nonce as AesNonce};
+use anyhow::{anyhow, Result};
 use chacha20poly1305::{
     aead::{Aead, AeadCore, KeyInit, OsRng},
     ChaCha20Poly1305, Key, Nonce,
 };
-use aes_gcm::{
-    aead::OsRng as AesOsRng,
-    Aes256Gcm, Nonce as AesNonce,
-};
+use hmac::Hmac;
+use pbkdf2::pbkdf2_hmac;
+use rand::RngCore;
 use rsa::{RsaPrivateKey, RsaPublicKey};
 use sha2::Sha256;
-use pbkdf2::pbkdf2_hmac;
-use hmac::Hmac;
 use std::fs;
+use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
 
 #[derive(Debug, thiserror::Error)]
@@ -49,8 +48,8 @@ impl CryptoEngine {
     pub fn encrypt_aes256gcm(data: &[u8], key: &[u8]) -> Result<Vec<u8>> {
         use aes_gcm::aead::{Aead, AeadCore, KeyInit};
         let key_arr: [u8; 32] = key
-            .get(..32)
-            .and_then(|s| s.try_into().ok())
+            .try_into()
+            .ok()
             .ok_or_else(|| anyhow!("key must be 32 bytes"))?;
         let key_ref: &aes_gcm::Key<Aes256Gcm> = (&key_arr).into();
         let cipher = Aes256Gcm::new(key_ref);
@@ -67,17 +66,22 @@ impl CryptoEngine {
             return Err(anyhow!("Ciphertext too short"));
         }
         let key_arr: [u8; 32] = key
-            .get(..32)
-            .and_then(|s| s.try_into().ok())
+            .try_into()
+            .ok()
             .ok_or_else(|| anyhow!("key must be 32 bytes"))?;
         let key_ref: &aes_gcm::Key<Aes256Gcm> = (&key_arr).into();
         let cipher = Aes256Gcm::new(key_ref);
         let nonce = AesNonce::from_slice(&ciphertext[..12]);
-        let plaintext = cipher.decrypt(nonce, &ciphertext[12..]).map_err(|e| anyhow!("{}", e))?;
+        let plaintext = cipher
+            .decrypt(nonce, &ciphertext[12..])
+            .map_err(|e| anyhow!("{}", e))?;
         Ok(plaintext)
     }
 
     pub fn encrypt_chacha20poly1305(data: &[u8], key: &[u8]) -> Result<Vec<u8>> {
+        if key.len() != 32 {
+            return Err(anyhow!("key must be 32 bytes"));
+        }
         let key = Key::from_slice(key);
         let cipher = ChaCha20Poly1305::new(key);
         let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
@@ -91,10 +95,15 @@ impl CryptoEngine {
         if ciphertext.len() < 12 {
             return Err(anyhow!("Ciphertext too short"));
         }
+        if key.len() != 32 {
+            return Err(anyhow!("key must be 32 bytes"));
+        }
         let key = Key::from_slice(key);
         let cipher = ChaCha20Poly1305::new(key);
         let nonce = Nonce::from_slice(&ciphertext[..12]);
-        let plaintext = cipher.decrypt(nonce, &ciphertext[12..]).map_err(|e| anyhow!("{}", e))?;
+        let plaintext = cipher
+            .decrypt(nonce, &ciphertext[12..])
+            .map_err(|e| anyhow!("{}", e))?;
         Ok(plaintext)
     }
 
@@ -113,8 +122,12 @@ impl CryptoEngine {
     }
 
     pub fn verify_hmac(data: &[u8], key: &[u8], mac: &[u8]) -> bool {
-        match Self::compute_hmac(data, key) {
-            Ok(computed) => computed == mac,
+        use hmac::Mac;
+        match <Hmac<Sha256> as Mac>::new_from_slice(key) {
+            Ok(mut verifier) => {
+                verifier.update(data);
+                verifier.verify_slice(mac).is_ok()
+            }
             Err(_) => false,
         }
     }
@@ -130,11 +143,25 @@ impl CryptoEngine {
         if !path.exists() {
             return Ok(());
         }
-        let data = fs::read(path)?;
-        for _ in 0..3 {
-            let random_data: Vec<u8> = (0..data.len()).map(|_| rand::random()).collect();
-            fs::write(path, &random_data)?;
+        if !fs::symlink_metadata(path)?.file_type().is_file() {
+            return Err(anyhow!("Expected regular file"));
         }
+        let mut file = fs::OpenOptions::new().write(true).open(path)?;
+        let length = file.metadata()?.len();
+        let mut buffer = [0u8; 65536];
+        let mut rng = rand::thread_rng();
+        for _ in 0..3 {
+            file.seek(SeekFrom::Start(0))?;
+            let mut remaining = length;
+            while remaining > 0 {
+                let n = remaining.min(buffer.len() as u64) as usize;
+                rng.fill_bytes(&mut buffer[..n]);
+                file.write_all(&buffer[..n])?;
+                remaining -= n as u64;
+            }
+            file.sync_all()?;
+        }
+        drop(file);
         fs::remove_file(path)?;
         Ok(())
     }
@@ -145,23 +172,17 @@ pub struct RaptorQEncoder;
 impl RaptorQEncoder {
     pub fn encode(data: &[u8], redundancy: u8) -> Vec<Vec<u8>> {
         let chunk_size = 1024;
-        let mut blocks = Vec::new();
-        for chunk in data.chunks(chunk_size) {
-            blocks.push(chunk.to_vec());
-        }
-        let original_count = blocks.len();
-        for _ in 0..redundancy as usize {
-            let parity_block: Vec<u8> = blocks.iter()
-                .take(original_count)
-                .fold(vec![0u8; chunk_size], |mut acc, block| {
-                    for (i, &byte) in block.iter().enumerate() {
-                        if i < acc.len() {
-                            acc[i] ^= byte;
-                        }
-                    }
-                    acc
-                });
-            blocks.push(parity_block);
+        let mut blocks: Vec<_> = data.chunks(chunk_size).map(<[u8]>::to_vec).collect();
+        if redundancy > 0 {
+            let mut parity = vec![0u8; chunk_size];
+            for block in &blocks {
+                for (index, byte) in block.iter().enumerate() {
+                    parity[index] ^= byte;
+                }
+            }
+            for _ in 0..redundancy {
+                blocks.push(parity.clone());
+            }
         }
         blocks
     }
@@ -203,7 +224,11 @@ mod tests {
             }
         }
         let entropy = CryptoEngine::calculate_entropy(&data);
-        assert!(entropy > 7.9, "expected near-maximal entropy, got {}", entropy);
+        assert!(
+            entropy > 7.9,
+            "expected near-maximal entropy, got {}",
+            entropy
+        );
     }
 
     #[test]

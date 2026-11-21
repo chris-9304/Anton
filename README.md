@@ -1,6 +1,7 @@
-# Anton - Professional Anti-Ransomware System
+# Anton
 
-A professional-grade anti-ransomware software built with Rust backend and React frontend.
+A Rust and React sandbox for demonstrating ransomware-pattern detection and recovery.
+It includes a native desktop app, web dashboard, API, and CLI.
 
 ## Features
 
@@ -12,7 +13,7 @@ A professional-grade anti-ransomware software built with Rust backend and React 
   - AES-256-GCM encryption
   - ChaCha20-Poly1305 encryption
   - RSA key generation
-  - RaptorQ FEC for file redundancy
+  - Legacy XOR parity helpers (not a complete RaptorQ implementation)
 - **File Recovery**: Shadow copies and automatic restoration
 - **REST API**: HTTP server with CORS support
 
@@ -22,7 +23,7 @@ A professional-grade anti-ransomware software built with Rust backend and React 
   Ransomware Demo" / "Revert Demo" buttons for live demonstrations.
 
 ### Frontend (React + Vite + Tailwind)
-- **Dashboard**: Real-time system overview with stats and charts
+- **Dashboard**: Real-time system overview with status and recent detections
 - **Scan Activity**: View scan history and results
 - **History**: Backend activity logs
 - **Settings**: Configure AI detection and monitoring
@@ -39,17 +40,19 @@ A professional-grade anti-ransomware software built with Rust backend and React 
 
 1. Build and run the API server:
 ```bash
-cargo run --bin anton_api
+cargo run --no-default-features --bin anton_api
 ```
 
-The API server will run on `http://localhost:8080`
+The API server defaults to `http://localhost:8080`. Set `ANTON_API_ADDR` to change
+the bind address, for example `127.0.0.1:18089`. Set `VITE_API_BASE_URL` before
+starting or building the frontend when using a different API address.
 
 ### Frontend Setup
 
 1. Install dependencies:
 ```bash
 cd web
-npm install
+npm ci
 ```
 
 2. Start the development server:
@@ -116,16 +119,16 @@ Run any of them directly, e.g. `./target/release/anton_api`, `./target/release/a
 
 ### Web frontend
 
-Unchanged from the Quick Start section above — `cd web && npm install && npm run dev`
+Unchanged from the Quick Start section above — `cd web && npm ci && npm run dev`
 (serves on `http://localhost:5173` and talks directly to `anton_api` on `:8080`; CORS is
 already permissive server-side, no proxy needed).
 
 ### Containers (Podman / OrbStack)
 
-The CLI, `anton_api`, `demo_ransomware`, and the web frontend all build and run fine in
-a Linux container. The desktop GUI does not: `anton_desktop` (and `anton`'s GUI mode)
-links against Cocoa/AppKit, which has no equivalent inside a Linux container — build and
-package that natively instead (see below).
+The Rust container builds with `--no-default-features`: CLI/API binaries exclude Slint,
+GUI compilation, and GUI system libraries. Desktop applications must be built for the
+host desktop platform. The web container uses `npm ci`; its API URL is configurable
+with `--build-arg VITE_API_BASE_URL=http://your-api:8080`.
 
 ```bash
 # Backend (anton, anton_api, demo_ransomware)
@@ -171,6 +174,8 @@ Gatekeeper will block it — right-click `Anton.app` and choose **Open**, or run
 - `simulators.rs` / `simulation.rs`: Test ransomware simulators and the internal sandboxed self-test
 - `demo_log.rs`: Plain-text demo transcript logger
 - `app_settings.rs`: Shared runtime toggles (UI ⟷ watcher)
+- `demo.rs`: Shared cancellable demo controller, child ownership, and restore flow
+- `scanner.rs`: Streaming directory scans and bounded progress publication
 - `desktop.rs`: Slint desktop GUI (`anton`'s GUI mode and `anton_desktop`)
 - `api_server.rs`: HTTP API server
 - `demo_ransomware.rs`: The sandboxed ransomware simulator binary itself
@@ -188,54 +193,111 @@ Gatekeeper will block it — right-click `Anton.app` and choose **Open**, or run
 - `GET /api/scans`: Scan history
 - `POST /api/settings/ai`: Toggle AI engine
 - `POST /api/settings/monitoring`: Toggle monitoring
-- `POST /api/scan/quick`: Trigger quick scan
-- `POST /api/scan/full`: Trigger full scan
+- `POST /api/scan/quick`: Record a simulated quick scan
+- `POST /api/scan/full`: Record a simulated full scan
 
-## Testing
+## Settings and resource limits
 
-The system includes safe ransomware simulators for testing:
-- Old-style ransomware: Slow rename with classic extensions
-- Modern ransomware: Fast parallel encryption
-- Wiper malware: Mass file deletion
+- Monitoring off pauses analysis, canary protection, and automatic recovery. AI off
+  skips heuristic analysis while keeping canary protection active. The desktop
+  diagnostic pauses its main subscription and owns a watcher confined to the test
+  sandbox; it subscribes after setup to avoid detecting its own initialization.
+  Settings changes
+  invalidate stale detector state and queued events from previous settings. Queued
+  events retain their arrival timestamps so slow I/O does not distort rate windows.
+- The watcher owns one worker and a 2,048-event queue. Native watcher errors or queue
+  overflow mark monitoring as degraded; status includes `monitoring_health` and
+  `dropped_events`. Degraded status stays set until the watcher is restarted.
+- Each detector window retains at most 4,096 samples. Process-family state is bounded
+  and unknown PID `0` avoids process-table collection. File inspection reads 4 KiB.
+- API history retains 100 logs, 50 detections, and 1,000 scan records; cumulative
+  counters continue increasing. Desktop activity retains 1,000 rows and pending
+  activity is bounded. Scan progress publishes at most every 100 ms plus completion.
+- Desktop scans stream files to depth 6 without following symbolic links, report
+  skipped files, and show indeterminate progress until completion. High entropy is a
+  heuristic and can flag legitimate compressed/encrypted files.
+- Web requests time out after 10 seconds. Polling waits for completion, cancels on
+  navigation, and pauses while the page is hidden. Scan history renders 50 rows at a time.
+- Demo transcripts rotate to `demo_log.txt.1` at 5 MiB, retaining two files. Processes
+  reopen on append; simultaneous parent/child writes may briefly exceed the rotation
+  threshold by an in-flight write. Phase and remediation messages remain enabled.
+- Backups are streamed and verified before removal. A pending `TestRun_backup`
+  prevents another demo from replacing it. Shadow copies have integrity sidecars;
+  legacy copies without sidecars are retained but cannot be automatically verified.
+  Automatic encrypted-file cleanup restores only verified originals with unambiguous
+  appended suffixes such as `report.txt.locked`; ambiguous replacement suffixes remain.
 
-All simulators operate only in the `TestRun` directory and include automatic cleanup.
+The `.app` contains `anton` and `demo_ransomware`; the duplicate desktop-only GUI binary
+is no longer bundled. `anton_desktop` remains available as a separate build target.
+Runtime directories and protected-folder settings keep their existing locations.
 
-## Security Features
+## Testing and measured performance
 
-- Real-time file system monitoring
-- Behavioral pattern detection
-- Cryptographic file protection
-- Automatic threat response
-- File recovery capabilities
-- Low resource usage
+```bash
+cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo clippy --locked --no-default-features --all-targets -- -D warnings
+cargo test --locked --all-targets
+cargo test --locked --no-default-features --all-targets
+cargo test --locked --release --no-default-features --test regressions scan_ten_thousand_files -- --ignored --nocapture
+cargo run --locked --release --no-default-features --example resource_probe
+cd web
+npm test
+npm run build
+```
 
-## Known Limitations
+macOS watcher and demo integration tests require native FSEvents access. A sandbox
+that suppresses FSEvents can cause their detection deadlines to expire.
 
-- **Vault** (both the desktop GUI and the web dashboard) is a stub — "coming soon," no
-  `/api/vault/*` routes exist yet.
-- The desktop GUI's rendering can't be verified by an automated agent — if you're
-  scripting a build/test pipeline, treat a clean launch (no panic/crash) as the
-  automatable check, and visually confirm the window and its tabs/buttons by hand.
-- The macOS `.app` is ad-hoc signed, not notarized — Gatekeeper will block first launch
-  until you right-click → Open (or clear the quarantine attribute).
-- `Config::for_test_run()` resolves `TestRun`/`ShadowCopies` relative to
-  `CARGO_MANIFEST_DIR`, i.e. wherever the binary was *built*, not a per-user data
-  directory — this is an existing design constraint (not introduced by the macOS port),
-  worth knowing before relying on it for anything beyond local development/demos.
-- `npm audit` flags a moderate-severity `esbuild`/Vite dev-server vulnerability
-  ([GHSA-67mh-4wv8-2f99](https://github.com/advisories/GHSA-67mh-4wv8-2f99)) in
-  `web/`. It only affects `npm run dev` (a malicious website could probe the local dev
-  server) — production builds (`npm run build`, what actually ships) are unaffected.
-  The fix requires a breaking Vite 8 upgrade that `@vitejs/plugin-react` doesn't
-  officially support yet (its peer range tops out at `^7.0.0`); attempting it produced
-  new build warnings and a broken JSX option, so it was reverted. Revisit once
-  `@vitejs/plugin-react` adds Vite 8 support.
-- The API server's `/api/scan/quick` and `/api/scan/full` endpoints are demo stubs —
-  they record a `ScanRecord` and return a canned "no threats found" response rather
-  than triggering a real scan. `/api/status`'s `threats_blocked`/`files_monitored`/
-  `heuristic_score` are likewise fixed demo values, not live counters. Pre-existing,
-  not introduced by this pass.
+For optional browser checks, install Playwright in your development environment,
+start Vite on port 18765, and run `npm run test:ui`. `ANTON_WEB_URL` changes the test
+URL; `PLAYWRIGHT_PATH` can point to an existing Playwright installation, and
+`ANTON_BROWSER_EXECUTABLE` can select an installed Chromium browser. Browser checks
+cover mobile layout, severity styling, scan fields, failed settings, keyboard use,
+and offline feedback. The native desktop still needs a visual review on each target OS.
+
+Measured on this Apple Silicon development machine, release builds, three runs of
+20,000 synthetic create events with the same timestamp and 100 directory names:
+
+| Detector workload | Before (`e39358a`) | After |
+|---|---:|---:|
+| Median total time | 621 ms | 306 ms |
+| Median peak process RSS | 12.31 MiB | 6.36 MiB |
+
+The comparison compiled the original detector modules and current modules with the
+same locked dependencies and workload in `examples/resource_probe.rs`. This is a
+synthetic detector benchmark, not a measurement of whole-application RAM or end-to-end
+filesystem latency. The bounded windows intentionally retain only the latest samples
+under sustained bursts. A separate 10,000-file release scan completed in 184 ms with
+2 progress publications on a warm local filesystem; results vary with storage and load.
+
+Build artifacts can be regenerated with `cargo build --locked --release`. `cargo clean`
+reclaims local Rust build caches; it does not remove runtime files or download caches.
+Development debug information is reduced to level 1 and release debug information
+is stripped. No dependency major-version upgrades are included in this cleanup.
+After verification and a clean release rebuild, local Rust artifacts occupy about
+2.0 GiB, compared with the original 7.5 GiB. Runtime files and backups were retained.
+
+## Known limitations
+
+- Vault remains an explicit placeholder with no backend routes.
+- API quick/full scans are simulations and do not inspect files. Status exposes
+  `demo_mode: true`; file count and heuristic score remain sample values. Detection
+  and scan counters are live session counters.
+- Saved folders are preferences only; monitoring still watches TestRun. No network
+  event source feeds the DNS analyzer; its desktop control is disabled.
+- `Config::for_test_run()` retains `CARGO_MANIFEST_DIR`-relative TestRun/ShadowCopies.
+  Installed applications therefore still depend on their build-time checkout path.
+- The app bundle is ad-hoc signed, not notarized. Platform permissions and Gatekeeper
+  may require a manual first launch.
+- Compatible dependency updates fixed the PostCSS selector-parser and source-map-js
+  advisories. The 2026-11-20 npm audit still reports two build-tool vulnerabilities
+  (one moderate, one high) through Vite/esbuild. Their suggested fix requires a major
+  Vite upgrade; that migration is outside this cleanup.
+- The legacy `RaptorQEncoder` API is a simple XOR parity demonstration. It does not
+  implement general RaptorQ erasure recovery. Overwriting a file before deletion also
+  cannot guarantee physical erasure on SSD or copy-on-write filesystems.
 
 ## License
 
-Professional anti-ransomware system - All rights reserved
+All rights reserved

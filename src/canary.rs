@@ -23,13 +23,32 @@ pub struct CanaryManager;
 impl CanaryManager {
     /// Create hidden canary (bait) files under `root`. Creates them if they don't exist.
     pub fn deploy(&self, root: &Path) {
+        if let Err(error) = self.try_deploy(root) {
+            tracing::error!(%error, "Canary deployment failed");
+        }
+    }
+
+    pub fn try_deploy(&self, root: &Path) -> std::io::Result<()> {
         for name in CANARY_FILES {
             let path = root.join(name);
-            if path.exists() {
-                continue;
+            match fs::symlink_metadata(&path) {
+                Ok(metadata) if metadata.file_type().is_file() => continue,
+                Ok(_) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "Canary path is not a regular file",
+                    ))
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
             }
-            let _ = fs::File::create(&path).and_then(|mut f| f.write_all(b"canary"));
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)?
+                .write_all(b"canary")?;
         }
+        Ok(())
     }
 
     /// Returns true if the given path is one of our known canary (bait) files.

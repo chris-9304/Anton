@@ -4,13 +4,15 @@
 
 use crate::behavior_engine::{event_type_to_file_op, BehaviorEngine, FileOp};
 use crate::crypto::CryptoEngine;
-use crate::models::{AnalysisConfig, EventType, FileEvent};
 use crate::models::ThreatLevel;
+use crate::models::{AnalysisConfig, EventType, FileEvent};
 use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
+
+const SAMPLE_CAP: usize = 4096;
 
 const RATE_WINDOW_SECS: f64 = 0.5;
 const RATE_THRESHOLD: usize = 5;
@@ -42,11 +44,14 @@ impl FrequencyAnalyzer {
 
     pub fn push(&mut self, ev: &FileEvent) {
         let now = ev.timestamp;
+        if self.events.len() == SAMPLE_CAP {
+            self.events.pop_front();
+        }
         self.events.push_back((now, ev.event_type));
         self.evict(now);
     }
 
-    fn evict(&mut self, now: SystemTime) {
+    pub(crate) fn evict(&mut self, now: SystemTime) {
         while let Some((t, _)) = self.events.front() {
             if now.duration_since(*t).unwrap_or_default() > self.window {
                 self.events.pop_front();
@@ -117,6 +122,7 @@ impl EntropyAnalyzer {
     /// a second open+read of the same file the caller likely just read itself). Falls
     /// back to reading the file here if `None`.
     pub fn push(&mut self, ev: &FileEvent, header: Option<&[u8]>) {
+        self.evict(ev.timestamp);
         if ev.event_type != EventType::Modified {
             return;
         }
@@ -141,12 +147,18 @@ impl EntropyAnalyzer {
             return;
         }
         let entropy = CryptoEngine::calculate_entropy(data);
-        let now = ev.timestamp;
+        self.push_sample(ev.timestamp, entropy);
+    }
+
+    pub fn push_sample(&mut self, now: SystemTime, entropy: f64) {
+        if self.samples.len() == SAMPLE_CAP {
+            self.samples.pop_front();
+        }
         self.samples.push_back((now, entropy));
         self.evict(now);
     }
 
-    fn evict(&mut self, now: SystemTime) {
+    pub(crate) fn evict(&mut self, now: SystemTime) {
         while let Some((t, _)) = self.samples.front() {
             if now.duration_since(*t).unwrap_or_default() > self.window {
                 self.samples.pop_front();
@@ -176,16 +188,36 @@ impl EntropyAnalyzer {
 // ---- C. ExtensionAnalyzer: known bad extensions (incl. .cordyceps, .enc, .locked, .rust, .fun) ----
 
 static BAD_EXTENSIONS: &[&str] = &[
-    "locked", "crypt", "encrypted", "encrypt", "vault", "secure",
-    "xxx", "zzz", "aaa", "micro", "crypto", "kraken", "teslacrypt",
-    "cerber", "locky", "petya", "wannacry", "ryuk", "maze",
-    "cordyceps", "enc", "rust", "fun",
+    "locked",
+    "crypt",
+    "encrypted",
+    "encrypt",
+    "vault",
+    "secure",
+    "xxx",
+    "zzz",
+    "aaa",
+    "micro",
+    "crypto",
+    "kraken",
+    "teslacrypt",
+    "cerber",
+    "locky",
+    "petya",
+    "wannacry",
+    "ryuk",
+    "maze",
+    "cordyceps",
+    "enc",
+    "rust",
+    "fun",
 ];
 
 pub struct ExtensionAnalyzer {
     window: Duration,
     entries: VecDeque<(SystemTime, String)>,
     min_mass: usize,
+    counts: HashMap<String, usize>,
 }
 
 impl ExtensionAnalyzer {
@@ -194,10 +226,12 @@ impl ExtensionAnalyzer {
             window: Duration::from_secs_f64(time_window_secs),
             entries: VecDeque::new(),
             min_mass,
+            counts: HashMap::new(),
         }
     }
 
     pub fn push(&mut self, ev: &FileEvent) {
+        self.evict(ev.timestamp);
         if ev.event_type != EventType::Moved {
             return;
         }
@@ -209,16 +243,31 @@ impl ExtensionAnalyzer {
                 .to_lowercase();
             if !ext.is_empty() {
                 let now = ev.timestamp;
+                if self.entries.len() == SAMPLE_CAP {
+                    self.pop_front();
+                }
+                *self.counts.entry(ext.clone()).or_default() += 1;
                 self.entries.push_back((now, ext));
                 self.evict(now);
             }
         }
     }
 
-    fn evict(&mut self, now: SystemTime) {
+    fn pop_front(&mut self) {
+        if let Some((_, extension)) = self.entries.pop_front() {
+            if let Some(count) = self.counts.get_mut(&extension) {
+                *count -= 1;
+                if *count == 0 {
+                    self.counts.remove(&extension);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn evict(&mut self, now: SystemTime) {
         while let Some((t, _)) = self.entries.front() {
             if now.duration_since(*t).unwrap_or_default() > self.window {
-                self.entries.pop_front();
+                self.pop_front();
             } else {
                 break;
             }
@@ -230,15 +279,12 @@ impl ExtensionAnalyzer {
         if !config.enable_extensions {
             return 0.0;
         }
-        let mut counts: HashMap<&str, usize> = HashMap::new();
-        for (_, ext) in &self.entries {
-            *counts.entry(ext.as_str()).or_default() += 1;
-        }
-        let max = counts.values().copied().max().unwrap_or(0);
+        let max = self.counts.values().copied().max().unwrap_or(0);
         if max < self.min_mass {
             return 0.0;
         }
-        let is_known_bad = counts
+        let is_known_bad = self
+            .counts
             .keys()
             .any(|ext| BAD_EXTENSIONS.iter().any(|&b| ext.contains(b)));
         let base = (max as f32 / (self.min_mass as f32 + 5.0)).clamp(0.0, 1.0);
@@ -267,11 +313,14 @@ impl BehaviorAnalyzer {
 
     pub fn push(&mut self, ev: &FileEvent) {
         let now = ev.timestamp;
+        if self.times.len() == SAMPLE_CAP {
+            self.times.pop_front();
+        }
         self.times.push_back(now);
         self.evict(now);
     }
 
-    fn evict(&mut self, now: SystemTime) {
+    pub(crate) fn evict(&mut self, now: SystemTime) {
         while let Some(t) = self.times.front() {
             if now.duration_since(*t).unwrap_or_default() > self.window {
                 self.times.pop_front();
@@ -285,30 +334,21 @@ impl BehaviorAnalyzer {
         if self.times.len() < 3 {
             return 0.0;
         }
-        let mut intervals: Vec<f32> = Vec::new();
-        let slices = self.times.as_slices();
-        for win in slices.0.windows(2) {
-            if let [a, b] = win {
-                let dt = b.duration_since(*a).unwrap_or_default();
-                intervals.push(dt.as_secs_f32());
-            }
+        // Welford's algorithm includes the boundary between both VecDeque slices.
+        let mut count = 0usize;
+        let mut mean = 0.0f32;
+        let mut sum_squares = 0.0f32;
+        for (a, b) in self.times.iter().zip(self.times.iter().skip(1)) {
+            let interval = b.duration_since(*a).unwrap_or_default().as_secs_f32();
+            count += 1;
+            let delta = interval - mean;
+            mean += delta / count as f32;
+            sum_squares += delta * (interval - mean);
         }
-        if intervals.is_empty() {
-            return 0.0;
-        }
-        let mean = intervals.iter().copied().sum::<f32>() / intervals.len() as f32;
         if mean <= 0.0 {
             return 1.0;
         }
-        let var = intervals
-            .iter()
-            .map(|v| {
-                let d = v - mean;
-                d * d
-            })
-            .sum::<f32>()
-            / intervals.len() as f32;
-        let std = var.sqrt();
+        let std = (sum_squares / count as f32).max(0.0).sqrt();
         let cv = std / mean;
         let regularity = if cv <= 0.2 { 1.0 - (cv / 0.2) } else { 0.0 };
         let count_factor = (self.times.len() as f32 / 20.0).clamp(0.0, 1.0);
@@ -375,4 +415,69 @@ pub fn on_file_event(
 /// Convert a FileEvent + optional entropy into FileOp for the behavior engine.
 pub fn file_event_to_op(ev: &FileEvent, _entropy: f32) -> FileOp {
     event_type_to_file_op(ev.event_type)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn event(time: SystemTime, kind: EventType) -> FileEvent {
+        FileEvent {
+            timestamp: time,
+            event_type: kind,
+            src: "report.txt".into(),
+            dest: Some("report.locked".into()),
+        }
+    }
+
+    #[test]
+    fn wrapped_behavior_buffer_matches_contiguous_buffer() {
+        let mut wrapped = BehaviorAnalyzer::new(10.0);
+        let now = SystemTime::now();
+        for i in 0..100 {
+            wrapped.times.push_back(now + Duration::from_millis(i));
+        }
+        for _ in 0..90 {
+            wrapped.times.pop_front();
+        }
+        for i in 100..180 {
+            wrapped.times.push_back(now + Duration::from_millis(i));
+        }
+        let mut contiguous = BehaviorAnalyzer::new(10.0);
+        contiguous.times = wrapped.times.iter().copied().collect();
+        assert!((wrapped.automation_score() - contiguous.automation_score()).abs() < 0.00001);
+    }
+
+    #[test]
+    fn windows_expire_and_bursts_remain_detectable_at_capacity() {
+        let now = SystemTime::now();
+        let mut frequency = FrequencyAnalyzer::new();
+        let mut extensions = ExtensionAnalyzer::new(5, 10.0);
+        let mut entropy = EntropyAnalyzer::new(10.0);
+        let mut behavior = BehaviorAnalyzer::new(10.0);
+        for _ in 0..10_000 {
+            let event = event(now, EventType::Moved);
+            frequency.push(&event);
+            extensions.push(&event);
+            entropy.push_sample(now, 8.0);
+            behavior.push(&event);
+        }
+        assert_eq!(frequency.events.len(), SAMPLE_CAP);
+        assert_eq!(extensions.entries.len(), SAMPLE_CAP);
+        assert_eq!(entropy.samples.len(), SAMPLE_CAP);
+        assert_eq!(behavior.times.len(), SAMPLE_CAP);
+        let config = AnalysisConfig::default();
+        assert!(frequency.rename_burst());
+        assert!(extensions.extension_score(&config) >= 0.9);
+        assert_eq!(entropy.entropy_score(&config), 1.0);
+        let later = now + Duration::from_secs(11);
+        frequency.evict(later);
+        extensions.evict(later);
+        entropy.evict(later);
+        behavior.evict(later);
+        assert_eq!(frequency.frequency_score(&config), 0.0);
+        assert_eq!(extensions.extension_score(&config), 0.0);
+        assert!(extensions.counts.is_empty());
+        assert_eq!(entropy.entropy_score(&config), 0.0);
+        assert_eq!(behavior.automation_score(), 0.0);
+    }
 }

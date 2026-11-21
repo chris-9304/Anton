@@ -1,61 +1,17 @@
-# Builds anton, anton_api, and demo_ransomware for Linux containers (Podman/OrbStack).
-#
-# anton_desktop (and anton's GUI mode) is deliberately NOT built here: it links against
-# Cocoa/AppKit on macOS via objc2, and there is no equivalent way to produce a working
-# native macOS GUI binary from inside a Linux container. Build/package that natively on
-# the Mac host instead (see macos/build_app_bundle.sh).
-#
-# Note: build.rs (which compiles ui/appwindow.slint) runs for the whole package
-# regardless of which binary is selected below, so the Slint Linux backend's headers
-# still need to be present at build time even though anton_desktop itself isn't built.
-
+# Headless CLI/API builds do not compile or link the desktop toolkit.
 FROM rust:1-bookworm AS builder
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    pkg-config \
-    build-essential \
-    libfontconfig1-dev \
-    libfreetype6-dev \
-    libxkbcommon-dev \
-    libxcb1-dev \
-    libxcb-render0-dev \
-    libxcb-shape0-dev \
-    libxcb-xfixes0-dev \
-    libssl-dev \
-    && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /build
-COPY Cargo.toml Cargo.lock ./
-COPY build.rs ./
-COPY ui ./ui
+COPY Cargo.toml Cargo.lock build.rs ./
 COPY src ./src
-
-RUN cargo build --release --bin anton --bin anton_api --bin demo_ransomware
+RUN cargo build --locked --release --no-default-features --bin anton --bin anton_api --bin demo_ransomware
 
 FROM debian:bookworm-slim
-
-# anton (main.rs) links the anton lib crate, which includes the Slint-based desktop
-# module -- even though the CLI subcommands (reset/simulate/demo/etc.) never touch the
-# GUI at runtime, the dynamic linker still needs these shared libraries present just to
-# load the binary. anton_api does not need these (it's a separate crate root that
-# never links Slint), but they're harmless to have in the shared runtime image.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    libfontconfig1 \
-    libfreetype6 \
-    libxkbcommon0 \
-    libxcb1 \
-    libxcb-render0 \
-    libxcb-shape0 \
-    libxcb-xfixes0 \
-    && rm -rf /var/lib/apt/lists/*
-
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libgcc-s1 && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /build/target/release/anton /usr/local/bin/anton
 COPY --from=builder /build/target/release/anton_api /usr/local/bin/anton_api
 COPY --from=builder /build/target/release/demo_ransomware /usr/local/bin/demo_ransomware
 COPY containers/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
-
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["api"]
